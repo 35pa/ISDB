@@ -1,0 +1,74 @@
+name: Amazonアフィリエイト X自動投稿
+
+on:
+  schedule:
+    # UTC指定。日本時間 12:00 と 20:00 に投稿（JST = UTC+9）
+    - cron: "0 3 * * *"
+    - cron: "0 11 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "true にすると投稿せず文面の確認のみ"
+        required: false
+        default: "false"
+      asin:
+        description: "投稿する商品のASIN（空なら自動選択）"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: x-auto-post
+  cancel-in-progress: false
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: リポジトリを取得
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+
+      - name: Python を準備
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: 依存パッケージをインストール
+        run: pip install -r requirements.txt
+
+      - name: 投稿を実行
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_MODEL: ${{ vars.CLAUDE_MODEL }}
+          X_API_KEY: ${{ secrets.X_API_KEY }}
+          X_API_SECRET: ${{ secrets.X_API_SECRET }}
+          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+          AMAZON_ASSOCIATE_TAG: ${{ secrets.AMAZON_ASSOCIATE_TAG }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+          再投稿までの日数: ${{ vars.REPOST_INTERVAL_DAYS || '7' }}
+        run: |
+          ARGS=""
+          if [ -n "${{ github.event.inputs.asin }}" ]; then ARGS="--asin ${{ github.event.inputs.asin }}"; fi
+          python 自動投稿.py $ARGS
+
+      - name: 投稿履歴をコミット
+        if: ${{ env.DRY_RUN != 'true' }}
+        env:
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+        run: |
+          if git diff --quiet -- 投稿履歴.json; then
+            echo "履歴に変更なし"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add 投稿履歴.json
+          git commit -m "投稿履歴を更新 ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M'))"
+          git push

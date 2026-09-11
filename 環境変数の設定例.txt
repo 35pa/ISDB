@@ -1,0 +1,24 @@
+# このファイルを「.env」という名前でコピーし、各値を自分のものに書き換える
+# （.env は .gitignore 済みなので GitHub には上がらない）
+
+# ---- Anthropic (Claude) ----
+ANTHROPIC_API_KEY=sk-ant-xxxxxxxx
+# 省略可: 使用モデル（既定 claude-opus-5）
+CLAUDE_MODEL=claude-opus-5
+
+# ---- X (旧Twitter) Developer Portal: Keys and tokens ----
+# アプリの権限を「Read and write」にしてから Access Token を再生成すること
+X_API_KEY=xxxxxxxx
+X_API_SECRET=xxxxxxxx
+X_ACCESS_TOKEN=xxxxxxxx
+X_ACCESS_TOKEN_SECRET=xxxxxxxx
+
+# ---- Amazonアソシエイト ----
+# 例: hangtime-22 （アソシエイト・セントラルの「トラッキングID」）
+AMAZON_ASSOCIATE_TAG=xxxxxxxx-22
+
+# ---- 動作設定（省略可） ----
+# true にすると X へは投稿せず、生成した文面を表示するだけ
+DRY_RUN=false
+# 同じ商品を再投稿するまでの最短日数（既定 7）
+再投稿までの日数=7
