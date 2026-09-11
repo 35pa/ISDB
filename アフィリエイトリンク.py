@@ -16,9 +16,10 @@ _ASIN形式 = re.compile(r"^[A-Z0-9]{10}$")
 class 商品:
     asin: str
     商品名: str
-    カテゴリ: str
-    特徴: str
-    価格帯: str
+    ジャンル: str = ""
+    ターゲット: str = ""
+    口調: str = ""
+    特徴: str = ""
     短縮URL: str = ""
 
     def __post_init__(self) -> None:

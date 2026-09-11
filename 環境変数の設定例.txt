@@ -22,3 +22,4 @@ AMAZON_ASSOCIATE_TAG=xxxxxxxx-22
 DRY_RUN=false
 # 同じ商品を再投稿するまでの最短日数（既定 7）
 再投稿までの日数=7
+# Claude に作らせる投稿候補の数は 投稿文生成.py の 候補数（既定 3）

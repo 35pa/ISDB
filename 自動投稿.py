@@ -1,5 +1,7 @@
 """Amazonアフィリエイト商品を Claude で文章化し X に自動投稿するメインスクリプト。
 
+1本目に本文（＋ハッシュタグ・#PR）、そのリプライに誘導文＋【PR】＋アフィリエイトリンクを投稿する。
+
 使い方:
   python 自動投稿.py            # 商品を1つ選んで投稿
   python 自動投稿.py --dry-run  # 投稿せず文面を表示するだけ
@@ -18,7 +20,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from X投稿 import Xに投稿, 投稿文を組み立て
+from X投稿 import スレッド投稿, リンク投稿を組み立て, 本文を組み立て
 from アフィリエイトリンク import 商品, 商品リンク
 from 投稿文生成 import 投稿文を生成
 
@@ -40,9 +42,10 @@ def 商品リストを読む(パス: Path | None = None) -> list[商品]:
             商品(
                 asin=r["ASIN"].strip().upper(),
                 商品名=(r.get("商品名") or "").strip(),
-                カテゴリ=(r.get("カテゴリ") or "").strip(),
+                ジャンル=(r.get("ジャンル") or "").strip(),
+                ターゲット=(r.get("ターゲット") or "").strip(),
+                口調=(r.get("口調") or "").strip(),
                 特徴=(r.get("特徴") or "").strip(),
-                価格帯=(r.get("価格帯") or "").strip(),
                 短縮URL=(r.get("短縮URL") or "").strip(),
             )
         )
@@ -104,29 +107,50 @@ def 実行(*, dry_run: bool, asin: str | None) -> int:
     url = 商品リンク(対象, トラッキングID)
     過去投稿 = [h["本文"] for h in 履歴 if h["asin"] == 対象.asin]
     生成 = 投稿文を生成(対象, 過去投稿)
-    投稿 = 投稿文を組み立て(生成.本文, 生成.ハッシュタグ, url)
+    採用 = 生成.最良
+    本文投稿 = 本文を組み立て(採用.本文, 採用.ハッシュタグ)
+    リンク投稿 = リンク投稿を組み立て(採用.誘導文, url)
 
-    print("=== 投稿内容 ===")
-    print(投稿)
+    print(f"=== 候補（{len(生成.候補)}件、伸びる確率順） ===")
+    for c in sorted(生成.候補, key=lambda c: c.伸びる確率, reverse=True):
+        内訳 = " / ".join(f"{k}{v}" for k, v in c.採点.items())
+        print(f"[{c.伸びる確率}%] {c.切り口}  ({内訳})")
+        print(f"   {c.本文}")
+        if c.採点理由:
+            print(f"   理由: {c.採点理由}")
+    print("=== 採用する投稿（1本目） ===")
+    print(本文投稿)
+    print("=== リプライ（2本目） ===")
+    print(リンク投稿)
     print("================")
 
     if dry_run:
         print("DRY_RUN のため X には投稿しません")
         return 0
 
-    投稿ID = Xに投稿(投稿)
+    本文ID, リンクID = スレッド投稿(本文投稿, リンク投稿)
     履歴.append(
         {
             "asin": 対象.asin,
             "商品名": 対象.商品名,
             "投稿日時": 今.isoformat(timespec="seconds"),
-            "投稿ID": 投稿ID,
-            "本文": 生成.本文,
-            "投稿全文": 投稿,
+            "投稿ID": 本文ID,
+            "リンク投稿ID": リンクID,
+            "切り口": 採用.切り口,
+            "伸びる確率": 採用.伸びる確率,
+            "採点": 採用.採点,
+            "本文": 採用.本文,
+            "投稿全文": 本文投稿,
+            "リンク投稿全文": リンク投稿,
+            "不採用候補": [
+                {"切り口": c.切り口, "伸びる確率": c.伸びる確率, "本文": c.本文}
+                for c in 生成.候補
+                if c is not 採用
+            ],
         }
     )
     投稿履歴を保存(履歴)
-    print(f"投稿完了: https://x.com/i/web/status/{投稿ID}")
+    print(f"投稿完了: https://x.com/i/web/status/{本文ID}")
     return 0
 
 

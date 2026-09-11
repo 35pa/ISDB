@@ -28,25 +28,31 @@ def 文字数ポイント(テキスト: str) -> int:
     return 合計
 
 
-def 投稿文を組み立て(本文: str, ハッシュタグ: list[str], url: str) -> str:
-    """【PR】表記 + 本文 + ハッシュタグ + URL を1本の投稿にまとめ、上限内に収める。"""
-    タグ行 = " ".join(f"#{t}" for t in ハッシュタグ)
+def 本文を組み立て(本文: str, ハッシュタグ: list[str]) -> str:
+    """本文 + ハッシュタグ + #PR を1本目の投稿にまとめ、上限内に収める（URLはリプライに貼る）。"""
     本文 = 本文.strip()
+    タグ = [t for t in ハッシュタグ if t and t.upper() != "PR"]
     while True:
-        部品 = ["【PR】" + 本文, ""]
-        if タグ行:
-            部品.append(タグ行)
-        部品.append(url)
-        投稿 = "\n".join(部品)
+        タグ行 = " ".join(f"#{t}" for t in タグ + ["PR"])
+        投稿 = f"{本文}\n\n{タグ行}"
         if 文字数ポイント(投稿) <= 上限ポイント:
             return 投稿
-        if ハッシュタグ:
-            ハッシュタグ = ハッシュタグ[:-1]
-            タグ行 = " ".join(f"#{t}" for t in ハッシュタグ)
+        if タグ:
+            タグ = タグ[:-1]
             continue
         if len(本文) <= 10:
             raise ValueError("本文を短縮しても投稿上限に収まりません")
         本文 = 本文.rstrip("…")[:-1].rstrip() + "…"
+
+
+def リンク投稿を組み立て(誘導文: str, url: str) -> str:
+    """2本目（リプライ）: 誘導文 + 【PR】 + アフィリエイトリンク。"""
+    誘導文 = 誘導文.strip()
+    while True:
+        投稿 = f"{誘導文}\n【PR】\n{url}" if 誘導文 else f"【PR】\n{url}"
+        if 文字数ポイント(投稿) <= 上限ポイント:
+            return 投稿
+        誘導文 = 誘導文.rstrip("…")[:-1].rstrip() + "…" if len(誘導文) > 1 else ""
 
 
 def Xクライアント() -> tweepy.Client:
@@ -62,9 +68,18 @@ def Xクライアント() -> tweepy.Client:
     )
 
 
-def Xに投稿(テキスト: str) -> str:
-    """投稿して投稿IDを返す。"""
+def Xに投稿(テキスト: str, 返信先ID: str | None = None, client: tweepy.Client | None = None) -> str:
+    """投稿して投稿IDを返す。返信先IDを渡すとリプライとして投稿する。"""
     if 文字数ポイント(テキスト) > 上限ポイント:
         raise ValueError("投稿が文字数上限を超えています")
-    応答 = Xクライアント().create_tweet(text=テキスト)
+    client = client or Xクライアント()
+    応答 = client.create_tweet(text=テキスト, in_reply_to_tweet_id=返信先ID)
     return str(応答.data["id"])
+
+
+def スレッド投稿(本文投稿: str, リンク投稿: str) -> tuple[str, str]:
+    """1本目に本文、そのリプライにリンクを投稿し、両方のIDを返す。"""
+    client = Xクライアント()
+    本文ID = Xに投稿(本文投稿, client=client)
+    リンクID = Xに投稿(リンク投稿, 返信先ID=本文ID, client=client)
+    return 本文ID, リンクID
