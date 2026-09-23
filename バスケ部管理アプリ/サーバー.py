@@ -21,6 +21,29 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
+import importlib.util
+import os
+import unicodedata
+
+
+class _濁点つきファイル名の読み込み:
+    """Mac で ZIP を展開すると「データベース」など濁点・半濁点を含むファイル名が分解形（NFD）で保存され、
+    import で見つからなくなる。見つからないときだけ、正規化した名前で探し直して読み込む。"""
+
+    フォルダ = Path(__file__).resolve().parent
+
+    @classmethod
+    def find_spec(cls, 名前, path=None, target=None):
+        if path is not None:
+            return None
+        目標 = unicodedata.normalize("NFC", 名前) + ".py"
+        for 項目 in os.listdir(cls.フォルダ):
+            if 項目 != 目標 and unicodedata.normalize("NFC", 項目) == 目標:
+                return importlib.util.spec_from_file_location(名前, cls.フォルダ / 項目)
+        return None
+
+
+sys.meta_path.append(_濁点つきファイル名の読み込み)
 
 import API_スキル  # noqa: F401  ルート登録のために読み込む
 import API_チーム運営  # noqa: F401
@@ -139,6 +162,10 @@ def ハンドラーを作成(アプリ_: アプリ) -> type[BaseHTTPRequestHandl
                 対象 = (公開フォルダ / パス.lstrip("/")).resolve()
             except (OSError, ValueError):
                 対象 = None
+            if 対象 is not None and not 対象.is_file() and 対象.parent.is_dir():
+                # 分解形（NFD）で保存されたファイル名にも対応する
+                目標 = unicodedata.normalize("NFC", 対象.name)
+                対象 = next((対象.parent / 項目 for 項目 in os.listdir(対象.parent) if unicodedata.normalize("NFC", 項目) == 目標), 対象)
             if 対象 is None or not 対象.is_relative_to(公開フォルダ) or not 対象.is_file():
                 # 画面遷移（#/...）はクライアント側なので、未知のパスはトップへ
                 self._送信(404, "見つかりません".encode(), "text/plain; charset=utf-8")
