@@ -1,0 +1,15 @@
+{
+  "name": "バスケ部ノート",
+  "short_name": "バスケ部",
+  "description": "高校バスケ部のためのチーム運営・練習・作戦・成長記録アプリ",
+  "lang": "ja",
+  "start_url": "./#/home",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#fff7ed",
+  "theme_color": "#ea580c",
+  "icons": [
+    { "src": "アイコン.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
