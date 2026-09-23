@@ -4,6 +4,7 @@
   python サーバー.py                 # http://localhost:8000 で起動
   python サーバー.py --demo          # デモ用チーム（サンプルデータ入り）も作成して起動
   python サーバー.py --port 8080 --db データ/本番.sqlite3
+  python サーバー.py --demo --open   # 起動後にブラウザを自動で開く（起動ファイルが使う）
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ import sqlite3
 import sys
 import threading
 import traceback
+import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
@@ -187,15 +189,26 @@ def _LANのIPアドレス() -> str | None:
         return None
 
 
-def main() -> None:
+def main() -> int | None:
     引数 = argparse.ArgumentParser(description="バスケ部管理アプリのサーバー")
     引数.add_argument("--host", default="0.0.0.0", help="待ち受けアドレス（既定: 0.0.0.0 = 同じWi-Fiのスマホからも接続可）")
     引数.add_argument("--port", type=int, default=8000, help="ポート番号（既定: 8000）")
     引数.add_argument("--db", default=str(既定のDB), help="データベースファイルの場所")
     引数.add_argument("--demo", action="store_true", help="デモ用チームとサンプルデータを作成する")
+    引数.add_argument("--open", action="store_true", help="起動後にブラウザで自動的に開く（ポートが使用中なら空いている番号を探す）")
     設定 = 引数.parse_args()
 
-    サーバー, アプリ_ = サーバーを作成(設定.db, 設定.host, 設定.port)
+    # --open（起動ファイルからの実行）のときは、ポートが使用中でも次の番号で起動する
+    試す数 = 10 if 設定.open else 1
+    for ずらし in range(試す数):
+        try:
+            サーバー, アプリ_ = サーバーを作成(設定.db, 設定.host, 設定.port + ずらし)
+            設定.port += ずらし
+            break
+        except OSError:
+            if ずらし == 試す数 - 1:
+                print(f"ポート {設定.port} は使用中です。--port 8080 のように別の番号を指定してください")
+                return 1
     if 設定.demo:
         import デモデータ
 
@@ -206,7 +219,9 @@ def main() -> None:
     LAN = _LANのIPアドレス()
     if LAN and 設定.host in ("0.0.0.0", ""):
         print(f"同じWi-Fiのスマホからは: http://{LAN}:{設定.port}")
-    print("終了するには Ctrl + C")
+    print("終了するには Ctrl + C（またはこの画面を閉じる）")
+    if 設定.open:
+        threading.Timer(1.0, webbrowser.open, args=(f"http://localhost:{設定.port}",)).start()
     try:
         サーバー.serve_forever()
     except KeyboardInterrupt:

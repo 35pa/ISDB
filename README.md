@@ -61,9 +61,8 @@ python -m unittest テスト_自動投稿 -v   # テスト
 
 高校バスケ部向けのチーム運営・練習メニュー・作戦ボード・選手カルテ・スキル診断アプリ。`バスケ部管理アプリ/` フォルダにあり、Python だけで動く（追加インストール不要）。
 
-```bash
-cd バスケ部管理アプリ
-python サーバー.py --demo   # http://localhost:8000（デモ：チームコード DEMO22 / coach / demo-pass1）
-```
+- 起動：`バスケ部管理アプリ` フォルダの `起動_Windows.bat`（Mac は `起動_Mac.command`）をダブルクリック → ブラウザが自動で開く
+- コマンドの場合：`cd バスケ部管理アプリ` → `python サーバー.py --demo`（http://localhost:8000）
+- デモのログイン：チームコード `DEMO22` ／ `coach` ／ `demo-pass1`
 
 詳細は `バスケ部管理アプリ/README.md` を参照。
