@@ -1,0 +1,484 @@
+/* バスケ部ノート：スマートフォン優先のスタイル */
+
+:root {
+  --背景: #fff7ed;
+  --面: #ffffff;
+  --面2: #fef3e7;
+  --文字: #1c1917;
+  --薄文字: #78716c;
+  --罫線: #e7e5e4;
+  --主: #ea580c;
+  --主濃: #c2410c;
+  --主文字: #ffffff;
+  --強調: #ea580c;
+  --良: #16a34a;
+  --注意: #d97706;
+  --悪: #dc2626;
+  --薄: #d6d3d1;
+  --味方: #1d4ed8;
+  --相手: #dc2626;
+  --コート: #f3dcb5;
+  --コート線: #ffffff;
+  --リング: #ea580c;
+  --系列1: #ea580c;
+  --系列2: #2563eb;
+  --系列3: #16a34a;
+  --系列4: #9333ea;
+  --影: 0 1px 2px rgb(0 0 0 / 6%), 0 2px 8px rgb(0 0 0 / 5%);
+  --角: 14px;
+  --下部高さ: calc(62px + env(safe-area-inset-bottom));
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --背景: #16120f;
+    --面: #221c18;
+    --面2: #2c241f;
+    --文字: #f5f5f4;
+    --薄文字: #a8a29e;
+    --罫線: #3a312b;
+    --主: #f97316;
+    --主濃: #fb923c;
+    --強調: #fb923c;
+    --良: #22c55e;
+    --注意: #f59e0b;
+    --悪: #f87171;
+    --薄: #57534e;
+    --味方: #60a5fa;
+    --相手: #f87171;
+    --コート: #6b4f2e;
+    --系列2: #60a5fa;
+    --系列3: #4ade80;
+    --系列4: #c084fc;
+    --影: none;
+    color-scheme: dark;
+  }
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--背景);
+  color: var(--文字);
+  font-family: system-ui, -apple-system, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic UI", Meiryo, sans-serif;
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-tap-highlight-color: transparent;
+}
+main {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 0 16px calc(var(--下部高さ) + 24px);
+  outline: none;
+}
+h1, h2, h3 { line-height: 1.35; margin: 0; }
+h2 { font-size: 1.05rem; }
+h3 { font-size: 1rem; }
+p { margin: .4em 0; }
+a { color: var(--主濃); }
+small { color: var(--薄文字); font-size: .82rem; display: block; }
+button, input, select, textarea { font: inherit; color: inherit; }
+img { max-width: 100%; }
+
+/* ---------- 見出し・カード ---------- */
+.画面見出し {
+  position: sticky; top: 0; z-index: 5;
+  display: flex; align-items: center; gap: 8px;
+  margin: 0 -16px 12px; padding: calc(10px + env(safe-area-inset-top)) 16px 10px;
+  background: color-mix(in srgb, var(--背景) 92%, transparent);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--罫線);
+}
+.画面見出し h1 { font-size: 1.15rem; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.戻る { font-size: 2rem; line-height: 1; text-decoration: none; color: var(--文字); padding: 0 8px 4px 0; }
+.見出し右 { display: flex; gap: 6px; }
+.節見出し { margin: 20px 0 8px; }
+
+.カード {
+  background: var(--面); border-radius: var(--角); box-shadow: var(--影);
+  border: 1px solid var(--罫線);
+  padding: 14px; margin: 0 0 12px;
+  display: block;
+}
+.カード > h2 { margin-bottom: 8px; }
+.強調枠 { border: 2px solid var(--主); }
+.リンクカード { text-decoration: none; color: var(--文字); font-weight: 600; }
+details.カード > summary { cursor: pointer; font-weight: 700; }
+details.カード[open] > summary { margin-bottom: 8px; }
+.エラー { color: var(--悪); }
+
+.行 { display: flex; align-items: center; gap: 8px; }
+.行.間 { justify-content: space-between; }
+.行 > .進捗バー { flex: 1; }
+.伸びる { flex: 1; min-width: 0; }
+.中央 { text-align: center; justify-content: center; display: flex; margin-left: auto; margin-right: auto; }
+.補足 { color: var(--薄文字); font-size: .88rem; }
+.本文 { white-space: pre-wrap; overflow-wrap: anywhere; }
+.空 { color: var(--薄文字); text-align: center; padding: 12px 0; margin: 0; }
+.空.小 { padding: 4px 0; font-size: .85rem; text-align: left; }
+.オフライン注記 { background: var(--面2); border-radius: 10px; padding: 8px 12px; font-size: .88rem; }
+.注意書き { background: color-mix(in srgb, var(--注意) 14%, transparent); border-radius: 10px; padding: 8px 12px; font-size: .9rem; }
+.あいさつ { color: var(--薄文字); margin: -4px 0 12px; }
+.打消し { text-decoration: line-through; color: var(--薄文字); }
+.返信 { background: var(--面2); border-radius: 10px; padding: 8px 10px; font-size: .92rem; white-space: pre-wrap; }
+.隠す { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.箇条 { margin: 6px 0; padding-left: 1.2em; }
+
+/* ---------- ボタン ---------- */
+.ボタン {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: 44px; padding: 8px 16px;
+  border: 0; border-radius: 12px;
+  background: var(--主); color: var(--主文字);
+  font-weight: 700; text-decoration: none; cursor: pointer;
+  transition: transform .06s, filter .15s;
+}
+.ボタン:active { transform: scale(.97); }
+.ボタン:disabled { opacity: .5; }
+.ボタン.控えめ { background: var(--面2); color: var(--文字); border: 1px solid var(--罫線); }
+.ボタン.危険 { background: var(--悪); color: #fff; }
+.ボタン.良 { background: var(--良); color: #fff; }
+.ボタン.注意 { background: var(--注意); color: #fff; }
+.ボタン.悪 { background: var(--悪); color: #fff; }
+.ボタン.大 { width: 100%; min-height: 50px; margin: 6px 0; font-size: 1.02rem; }
+.ボタン.小 { min-height: 36px; padding: 4px 12px; font-size: .88rem; border-radius: 10px; }
+.ボタン列 { display: flex; gap: 8px; margin: 10px 0; }
+.ボタン列 > .ボタン:not(.小) { flex: 1; }
+.ボタン列.折返し { flex-wrap: wrap; }
+.小リンク { background: none; border: 0; color: var(--主濃); font-size: .88rem; padding: 4px 0; cursor: pointer; text-decoration: underline; }
+.アイコンボタン {
+  width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--罫線); background: var(--面);
+  font-size: 1.15rem; font-weight: 700; cursor: pointer; flex: none;
+}
+.アイコンボタン.強 { background: var(--主); color: #fff; border-color: var(--主); }
+.アイコンボタン:disabled { opacity: .35; }
+:focus-visible { outline: 3px solid color-mix(in srgb, var(--主) 60%, transparent); outline-offset: 2px; }
+
+/* ---------- バッジ ---------- */
+.バッジ {
+  display: inline-block; padding: 1px 9px; border-radius: 999px; font-size: .76rem; font-weight: 700;
+  background: var(--面2); color: var(--文字); border: 1px solid var(--罫線); white-space: nowrap; vertical-align: middle; margin-left: 4px;
+}
+.バッジ.良 { background: color-mix(in srgb, var(--良) 16%, transparent); color: var(--良); border-color: transparent; }
+.バッジ.注意 { background: color-mix(in srgb, var(--注意) 18%, transparent); color: var(--注意); border-color: transparent; }
+.バッジ.悪 { background: color-mix(in srgb, var(--悪) 15%, transparent); color: var(--悪); border-color: transparent; }
+.バッジ.強調 { background: var(--主); color: #fff; border-color: transparent; }
+.バッジ.味方 { background: color-mix(in srgb, var(--味方) 15%, transparent); color: var(--味方); border-color: transparent; }
+.バッジ.相手 { background: color-mix(in srgb, var(--相手) 15%, transparent); color: var(--相手); border-color: transparent; }
+/* スキルレベル（基礎→プロ）。色は段階が上がるほど濃く */
+.バッジ.Lv基礎 { background: var(--面2); color: var(--薄文字); border-color: var(--罫線); }
+.バッジ.Lv初級 { background: color-mix(in srgb, var(--系列2) 14%, transparent); color: var(--系列2); border-color: transparent; }
+.バッジ.Lv中級 { background: color-mix(in srgb, var(--良) 16%, transparent); color: var(--良); border-color: transparent; }
+.バッジ.Lv上級 { background: color-mix(in srgb, var(--注意) 18%, transparent); color: var(--注意); border-color: transparent; }
+.バッジ.Lvプロ { background: var(--系列4); color: #fff; border-color: transparent; }
+.バッジ列 { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.バッジ列 .バッジ { margin-left: 0; }
+.良.文字 { color: var(--良); }
+.悪.文字 { color: var(--悪); }
+
+/* ---------- リスト ---------- */
+.リスト { display: flex; flex-direction: column; }
+.リスト.カード { padding: 4px 14px; }
+.リスト項目 {
+  display: flex; align-items: center; gap: 12px;
+  padding: 11px 0; min-height: 52px;
+  border: 0; border-bottom: 1px solid var(--罫線); background: none;
+  text-align: left; width: 100%; color: var(--文字); text-decoration: none;
+}
+.リスト項目:last-child { border-bottom: 0; }
+button.リスト項目, a.リスト項目 { cursor: pointer; }
+.リスト項目.縦 { flex-direction: column; align-items: stretch; gap: 4px; }
+.リスト項目 strong { display: block; overflow-wrap: anywhere; }
+.リスト項目 .伸びる { color: var(--文字); text-decoration: none; }
+.矢印 { color: var(--薄文字); font-size: 1.4rem; }
+.絵 { font-size: 1.3rem; }
+.絵.大 { font-size: 1.6rem; width: 36px; text-align: center; }
+.数 { color: var(--薄文字); font-size: .85rem; white-space: nowrap; }
+.未読点 { width: 10px; height: 10px; border-radius: 50%; background: var(--主); flex: none; }
+.日付箱 {
+  flex: none; min-width: 74px; text-align: center; font-size: .82rem; font-weight: 700;
+  background: var(--面2); border-radius: 10px; padding: 6px 4px;
+}
+.日付箱.試合 { background: var(--主); color: #fff; }
+.種類点 { width: 10px; height: 38px; border-radius: 5px; flex: none; background: var(--系列2); }
+.種類点.試合 { background: var(--主); }
+.種類点.その他 { background: var(--薄); }
+.既読 { color: var(--良); }
+.未読 { color: var(--薄文字); }
+
+/* ---------- 顔写真・プロフィール ---------- */
+.顔 {
+  border-radius: 50%; object-fit: cover; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: color-mix(in srgb, var(--主) 18%, var(--面)); color: var(--主濃); font-weight: 800;
+}
+.背番号 {
+  min-width: 40px; height: 40px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center;
+  background: var(--文字); color: var(--背景); font-weight: 800; font-size: 1.1rem;
+}
+.プロフィール { text-align: center; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.写真選択 { display: flex; align-items: center; gap: 16px; margin-bottom: 8px; }
+.写真選択 .ボタン列 { flex-direction: column; margin: 0; }
+.カルテ見出し { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.ログイン情報 { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; background: var(--面2); padding: 12px; border-radius: 12px; }
+.ログイン情報 dt { color: var(--薄文字); }
+.ログイン情報 dd { margin: 0; font-weight: 800; font-size: 1.15rem; letter-spacing: .04em; user-select: all; }
+.チームコード { font-size: 2rem; font-weight: 800; letter-spacing: .2em; text-align: center; background: var(--面2); border-radius: 12px; padding: 8px; user-select: all; }
+
+/* ---------- ログイン ---------- */
+.ログイン { padding-top: 40px; text-align: center; }
+.ログイン .カード { text-align: left; margin-top: 20px; }
+.ロゴ { font-size: 3.5rem; }
+.ログイン h1 { font-size: 1.7rem; }
+.説明 { color: var(--薄文字); }
+
+/* ---------- フォーム ---------- */
+.フォーム { display: flex; flex-direction: column; gap: 12px; }
+.フォーム小見出し { margin-top: 8px; font-size: .95rem; }
+.項目 { display: flex; flex-direction: column; gap: 4px; }
+.項目 > label { font-weight: 700; font-size: .92rem; }
+.項目.チェック { flex-direction: row; align-items: center; gap: 10px; font-weight: 600; }
+.項目.チェック input { width: 24px; height: 24px; accent-color: var(--主); flex: none; }
+.必須 { color: var(--悪); font-size: .75rem; margin-left: 6px; }
+input:not([type=checkbox]):not([type=range]):not([type=file]), select, textarea {
+  width: 100%; min-height: 46px; padding: 10px 12px;
+  border: 1px solid var(--罫線); border-radius: 10px; background: var(--面);
+  font-size: 16px; /* iPhone で拡大されないように */
+}
+textarea { min-height: 80px; resize: vertical; }
+input[type=range] { width: 100%; accent-color: var(--主); height: 32px; }
+input:focus, select:focus, textarea:focus { border-color: var(--主); outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--主) 25%, transparent); }
+section > textarea, section > input, .カード > textarea, .カード > input, main > input { margin: 8px 0; }
+
+/* ---------- タブ ---------- */
+.タブ { display: flex; gap: 4px; padding: 4px; background: var(--面2); border-radius: 12px; margin-bottom: 12px; overflow-x: auto; }
+.タブ項目 { flex: 1; min-height: 38px; border: 0; background: none; border-radius: 9px; font-weight: 700; color: var(--薄文字); white-space: nowrap; padding: 0 6px; cursor: pointer; }
+.タブ項目.選択中 { background: var(--面); color: var(--文字); box-shadow: var(--影); }
+.分類タブ .タブ { margin-top: -4px; }
+.分類タブ .タブ項目 { flex: none; min-height: 32px; font-size: 13px; }
+.テンプレート分類 { margin: 14px 0 6px; font-size: 14px; color: var(--薄文字); }
+
+/* ---------- 進捗バー・タイル ---------- */
+.進捗バー { height: 8px; border-radius: 4px; background: var(--面2); overflow: hidden; margin: 4px 0; border: 1px solid var(--罫線); }
+.進捗中身 { height: 100%; background: var(--主); border-radius: 4px; transition: width .3s; }
+.数値タイル { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 8px 0; }
+.タイル { background: var(--面2); border-radius: 12px; padding: 8px 4px; text-align: center; }
+.タイル strong { display: block; font-size: 1.2rem; }
+.タイル small { font-size: .72rem; }
+
+/* ---------- カレンダー ---------- */
+.期間移動 { display: flex; align-items: center; justify-content: space-between; margin: 4px 0; }
+.週間 { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.週の日 { background: var(--面); border: 1px solid var(--罫線); border-radius: var(--角); padding: 10px 14px; }
+.週の日.今日 { border: 2px solid var(--主); }
+.週の日 h3 { font-size: .92rem; color: var(--薄文字); }
+.月カレンダー { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin: 8px 0; }
+.曜日 { text-align: center; font-size: .75rem; color: var(--薄文字); font-weight: 700; }
+.曜日:nth-child(6) { color: var(--系列2); }
+.曜日:nth-child(7) { color: var(--悪); }
+.日 {
+  aspect-ratio: 1 / 1.05; border: 1px solid var(--罫線); background: var(--面); border-radius: 10px;
+  display: flex; flex-direction: column; align-items: center; justify-content: flex-start; padding: 4px 0; gap: 2px; cursor: pointer;
+}
+.日.空き { border: 0; background: none; cursor: default; }
+.日.今日 { border: 2px solid var(--主); }
+.日付数字 { font-size: .85rem; font-weight: 700; }
+.印列 { display: flex; gap: 2px; flex-wrap: wrap; justify-content: center; }
+.印 { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--系列2); }
+.印.試合 { background: var(--主); }
+.印.その他 { background: var(--薄); }
+.印.ステップ { background: var(--系列4); }
+.印.ステップ.クリア { background: var(--系列4); box-shadow: 0 0 0 2px color-mix(in srgb, var(--系列4) 35%, transparent); }
+.印.自主練 { background: var(--良); }
+.日.活動1 { background: color-mix(in srgb, var(--良) 12%, var(--面)); }
+.日.活動2 { background: color-mix(in srgb, var(--良) 26%, var(--面)); }
+.日.活動3 { background: color-mix(in srgb, var(--良) 42%, var(--面)); }
+.凡例 { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: .8rem; color: var(--薄文字); margin: 6px 0; }
+.凡例 span { display: inline-flex; align-items: center; gap: 5px; }
+.凡例 i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; }
+.凡例 i.印 { border-radius: 50%; width: 9px; height: 9px; }
+.選択日 { margin-top: 8px; background: var(--面); border-radius: var(--角); border: 1px solid var(--罫線); padding: 12px 14px; }
+.日の詳細 { margin-top: 10px; border-top: 1px solid var(--罫線); padding-top: 10px; }
+
+/* ---------- 予定詳細 ---------- */
+.大きな日付 { font-size: 1.2rem; font-weight: 800; }
+.出欠ボタン { display: grid; grid-template-columns: repeat(auto-fit, minmax(72px, 1fr)); gap: 6px; margin: 8px 0; }
+.集計列 { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; margin: 8px 0; }
+.集計 { text-align: center; background: var(--面2); border-radius: 10px; padding: 6px 0; }
+.集計 strong { display: block; font-size: 1.1rem; }
+.集計 small { font-size: .7rem; }
+.集計.良 strong { color: var(--良); }
+.集計.注意 strong { color: var(--注意); }
+.集計.悪 strong { color: var(--悪); }
+.メニュー順 { margin: 0; padding-left: 1.4em; }
+.メニュー順 > li { padding: 6px 0; border-bottom: 1px solid var(--罫線); }
+.メニュー順 > li:last-child { border-bottom: 0; }
+.メニュー順 summary, .メニュー詳細 summary { cursor: pointer; display: flex; justify-content: space-between; gap: 8px; }
+.メニュー順.編集 li { display: flex; align-items: center; gap: 4px; }
+.メニュー詳細 { padding: 10px 0; border-bottom: 1px solid var(--罫線); }
+.メニュー詳細:last-child { border-bottom: 0; }
+.分 { color: var(--薄文字); font-size: .85rem; white-space: nowrap; }
+.追加 { font-size: 1.4rem; color: var(--主); font-weight: 800; }
+.件数 { color: var(--薄文字); font-size: .9rem; }
+
+/* ---------- 表 ---------- */
+.表の枠 { overflow-x: auto; margin: 8px 0; }
+.表の枠.カード { padding: 0; }
+.表 { width: 100%; border-collapse: collapse; font-size: .88rem; white-space: nowrap; }
+.表 th, .表 td { padding: 8px 8px; border-bottom: 1px solid var(--罫線); text-align: center; }
+.表 th { font-size: .78rem; color: var(--薄文字); background: var(--面2); position: sticky; top: 0; }
+.表 td:first-child, .表 th:first-child { text-align: left; }
+.表 tr.押せる, .表 th.押せる { cursor: pointer; }
+.表 .並び中 { color: var(--主濃); font-weight: 800; }
+.固定列 { position: sticky; left: 0; background: var(--面); z-index: 1; }
+th.固定列 { background: var(--面2); z-index: 2; }
+.一覧表 .マス { font-size: .82rem; line-height: 1.3; }
+.一覧表 .マス.優先 { background: color-mix(in srgb, var(--主) 10%, transparent); }
+.スキル表 td:first-child { white-space: nowrap; }
+
+/* ---------- 作戦ボード ---------- */
+.作戦ボード { width: 100%; height: auto; display: block; border-radius: 12px; touch-action: none; user-select: none; -webkit-user-select: none; }
+.ボード枠 { margin: 8px 0; border-radius: 12px; overflow: hidden; box-shadow: var(--影); }
+.ボード枠.編集中 .作戦ボード { cursor: crosshair; }
+.選手駒.動かせる { cursor: grab; }
+.線.押せる { cursor: pointer; }
+.コマ操作 { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 6px 0; }
+.コマ番号 { min-width: 64px; text-align: center; font-weight: 800; }
+.コマ注記 { min-height: 1.6em; text-align: center; font-weight: 600; }
+.戦術一覧 { display: grid; gap: 10px; }
+.戦術カード { display: flex; gap: 12px; align-items: center; text-decoration: none; color: var(--文字); margin: 0; }
+.ミニボード { width: 108px; flex: none; border-radius: 8px; overflow: hidden; pointer-events: none; }
+.道具列 { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; }
+.道具 {
+  flex: none; min-height: 40px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--罫線); background: var(--面);
+  font-weight: 700; font-size: .85rem; cursor: pointer;
+}
+.道具.選択中 { background: var(--文字); color: var(--背景); border-color: var(--文字); }
+.コマ行 { flex-wrap: wrap; }
+.コマ列 { display: flex; gap: 6px; flex-wrap: wrap; }
+.コマ札 { width: 40px; height: 40px; border-radius: 10px; border: 1px solid var(--罫線); background: var(--面); font-weight: 800; cursor: pointer; }
+.コマ札.選択中 { background: var(--主); color: #fff; border-color: var(--主); }
+.コマ札.追加 { border-style: dashed; }
+.クイズ { padding: 10px 0; border-bottom: 1px solid var(--罫線); }
+.クイズ:last-child { border-bottom: 0; }
+.問題 { font-weight: 700; }
+.選択肢列 { display: flex; flex-direction: column; gap: 6px; margin: 6px 0; }
+.選択肢 { min-height: 44px; border-radius: 10px; border: 1px solid var(--罫線); background: var(--面); text-align: left; padding: 8px 12px; cursor: pointer; }
+.選択肢.選んだ { border: 2px solid var(--悪); }
+.選択肢.正解 { border: 2px solid var(--良); background: color-mix(in srgb, var(--良) 10%, var(--面)); }
+
+/* ---------- 図表 ---------- */
+.シュートチャート { width: 100%; height: auto; display: block; border-radius: 12px; }
+.エリア.押せる { cursor: pointer; }
+.エリア率 { font-size: 17px; font-weight: 800; fill: #fff; paint-order: stroke; stroke: rgb(0 0 0 / 25%); stroke-width: 2px; }
+.エリア数 { font-size: 13px; font-weight: 700; fill: #fff; paint-order: stroke; stroke: rgb(0 0 0 / 25%); stroke-width: 2px; }
+.レーダー, .折れ線 { margin: 8px 0; }
+.レーダー svg { width: 100%; max-width: 340px; display: block; margin: 0 auto; }
+.折れ線 svg { width: 100%; display: block; }
+.軸名 { font-size: 12px; font-weight: 700; fill: var(--文字); }
+.目盛名 { font-size: 8px; fill: var(--薄文字); }
+.軸の値 { font-size: 12px; font-weight: 800; fill: var(--系列1); paint-order: stroke; stroke: var(--面); stroke-width: 3px; stroke-linejoin: round; }
+.目盛 { font-size: 10px; fill: var(--薄文字); }
+.レーダー figcaption, .折れ線 figcaption { justify-content: center; }
+
+/* ---------- スタッツ入力 ---------- */
+.スタッツ入力 { display: flex; flex-direction: column; gap: 8px; }
+.得点表示 { font-size: 1.6rem; color: var(--主濃); }
+.カウンター一覧 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.カウンター { display: grid; grid-template-columns: auto 1fr auto; grid-template-areas: "名 名 名" "減 数 増"; align-items: center; gap: 2px 6px; background: var(--面2); border-radius: 12px; padding: 6px 8px; }
+.カウンター span { grid-area: 名; font-size: .8rem; font-weight: 700; white-space: nowrap; }
+.カウンター strong { grid-area: 数; text-align: center; font-size: 1.15rem; }
+.カウンター .アイコンボタン:first-of-type { grid-area: 減; }
+.カウンター .アイコンボタン:last-of-type { grid-area: 増; }
+.カウンター .アイコンボタン { width: 36px; height: 36px; }
+.チップ列 { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+.チップ { min-height: 40px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--罫線); background: var(--面); font-weight: 700; cursor: pointer; }
+.チップ.入力済 { border-color: var(--良); color: var(--良); }
+.チップ.選択中 { background: var(--主); color: #fff; border-color: var(--主); }
+
+/* ---------- スキル ---------- */
+.評価行 { padding: 6px 0; border-bottom: 1px solid var(--罫線); }
+.評価行 .値 { color: var(--主濃); }
+.クリア条件 { background: var(--面2); border-radius: 10px; padding: 6px 10px; font-weight: 600; }
+.ステップカード.優先 { border-left: 5px solid var(--主); }
+.ステップカード h3 { font-size: 1.1rem; margin: 4px 0; }
+.ステップ階段 { border-bottom: 1px solid var(--罫線); padding: 8px 0; }
+.ステップ階段:last-child { border-bottom: 0; }
+.ステップ階段 summary { cursor: pointer; display: flex; align-items: center; gap: 4px; }
+.ステップ階段 summary .数 { margin-left: auto; }
+.ステップ階段 ol, .ドリル一覧 { list-style: none; padding: 0; margin: 6px 0 0; }
+.ステップ行 {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  border: 0; background: none; padding: 7px 4px; border-radius: 8px; color: var(--文字); cursor: default;
+}
+button.ステップ行 { cursor: pointer; }
+li.現在 > .ステップ行 { background: color-mix(in srgb, var(--主) 12%, transparent); font-weight: 700; }
+li.完了 > .ステップ行 { color: var(--薄文字); }
+.差し込み { display: block; margin: 0 0 4px 36px; border: 0; background: none; color: var(--薄文字); font-size: .78rem; cursor: pointer; padding: 2px 0; }
+
+/* ---------- 目標 ---------- */
+.目標カード { width: 100%; text-align: left; color: var(--文字); display: flex; flex-direction: column; gap: 6px; }
+button.目標カード { cursor: pointer; }
+.目標文 { font-size: 1.05rem; overflow-wrap: anywhere; }
+
+/* ---------- 下部メニュー ---------- */
+#下部メニュー {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
+  display: grid; grid-template-columns: repeat(5, 1fr);
+  height: var(--下部高さ); padding-bottom: env(safe-area-inset-bottom);
+  background: color-mix(in srgb, var(--面) 94%, transparent); backdrop-filter: blur(10px);
+  border-top: 1px solid var(--罫線);
+}
+#下部メニュー[hidden] { display: none; }
+#下部メニュー a {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+  text-decoration: none; color: var(--薄文字); font-size: .7rem; font-weight: 700;
+}
+#下部メニュー a .絵 { font-size: 1.35rem; line-height: 1.2; filter: grayscale(1); opacity: .7; }
+#下部メニュー a.選択中 { color: var(--主濃); }
+#下部メニュー a.選択中 .絵 { filter: none; opacity: 1; }
+
+/* ---------- 通知・シート ---------- */
+#通知 { position: fixed; left: 16px; right: 16px; bottom: calc(var(--下部高さ) + 12px); z-index: 30; display: flex; flex-direction: column; align-items: center; gap: 6px; pointer-events: none; }
+.通知 {
+  max-width: 480px; padding: 10px 16px; border-radius: 12px; background: var(--文字); color: var(--背景);
+  font-weight: 700; font-size: .92rem; box-shadow: 0 6px 20px rgb(0 0 0 / 25%); transition: opacity .4s, transform .4s;
+}
+.通知.エラー { background: var(--悪); color: #fff; }
+.通知.注意 { background: var(--注意); color: #fff; }
+.通知.消える { opacity: 0; transform: translateY(8px); }
+dialog.シート {
+  width: 100%; max-width: 640px; max-height: 92dvh; margin: auto auto 0; padding: 0;
+  border: 0; border-radius: 20px 20px 0 0; background: var(--面); color: var(--文字);
+  display: flex; flex-direction: column;
+}
+dialog.シート:not([open]) { display: none; }
+dialog.シート::backdrop { background: rgb(0 0 0 / 45%); }
+.シート見出し { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px 8px; border-bottom: 1px solid var(--罫線); }
+.シート見出し h2 { font-size: 1.05rem; }
+.閉じる { width: 40px; height: 40px; border-radius: 50%; border: 0; background: var(--面2); font-size: 1.3rem; cursor: pointer; }
+.シート本文 { padding: 14px 16px calc(20px + env(safe-area-inset-bottom)); overflow-y: auto; }
+@media (min-width: 700px) {
+  dialog.シート { margin: auto; border-radius: 20px; }
+}
+
+/* ---------- 読み込み ---------- */
+.読み込み { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 60px 0; color: var(--薄文字); }
+.くるくる { width: 32px; height: 32px; border: 4px solid var(--罫線); border-top-color: var(--主); border-radius: 50%; animation: 回転 .8s linear infinite; }
+@keyframes 回転 { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+/* ---------- 印刷（戦術図の PDF 出力） ---------- */
+#印刷領域 { display: none; }
+@media print {
+  body.印刷中 > *:not(#印刷領域) { display: none !important; }
+  body.印刷中 { background: #fff; color: #000; }
+  body.印刷中 #印刷領域 { display: block; }
+  #印刷領域 h1 { font-size: 20pt; }
+  .印刷コマ一覧 { display: grid; grid-template-columns: 1fr 1fr; gap: 10mm; margin-top: 6mm; }
+  .印刷コマ一覧 figure { margin: 0; break-inside: avoid; }
+  .印刷コマ一覧 svg { width: 100%; height: auto; border: 1px solid #999; }
+  .印刷コマ一覧 figcaption { font-size: 10pt; margin-top: 2mm; }
+}
