@@ -253,7 +253,7 @@ CREATE TABLE IF NOT EXISTS drill_steps (
   id INTEGER PRIMARY KEY,
   team_id INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
   category_id INTEGER NOT NULL REFERENCES skill_categories(id) ON DELETE CASCADE,
-  level TEXT NOT NULL CHECK (level IN ('初級', '中級', '上級')),
+  level TEXT NOT NULL CHECK (level IN ('基礎', '初級', '中級', '上級', 'プロ')),
   step_no INTEGER NOT NULL DEFAULT 1,
   title TEXT NOT NULL,
   content TEXT NOT NULL DEFAULT '',
@@ -318,7 +318,34 @@ def 接続(パス: str | Path) -> sqlite3.Connection:
 
 def 初期化(接続先: sqlite3.Connection) -> None:
     接続先.executescript(スキーマ)
+    _旧バージョンのデータを更新(接続先)
     接続先.commit()
+
+
+def _旧バージョンのデータを更新(接続先: sqlite3.Connection) -> None:
+    """以前のバージョンで作ったデータベースを、今のバージョンで使える形にそろえる。"""
+    # ドリルのレベルが3段階（初級・中級・上級）だった頃の表を、5段階（基礎〜プロ）を入れられる表に作り直す
+    定義 = 接続先.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'drill_steps'").fetchone()[0]
+    if "'基礎'" not in 定義:
+        新しい定義 = スキーマ.split("CREATE TABLE IF NOT EXISTS drill_steps", 1)[1].split(");", 1)[0] + ");"
+        接続先.commit()
+        接続先.execute("PRAGMA foreign_keys = OFF")
+        try:
+            接続先.executescript(
+                f"""BEGIN;
+                CREATE TABLE drill_steps_新 {新しい定義}
+                INSERT INTO drill_steps_新 SELECT * FROM drill_steps;
+                DROP TABLE drill_steps;
+                ALTER TABLE drill_steps_新 RENAME TO drill_steps;
+                COMMIT;"""
+            )
+        finally:
+            接続先.execute("PRAGMA foreign_keys = ON")
+    # スキル名「フィジカル」は「基礎体力」に変更（同じチームに「基礎体力」が既にあれば変更しない）
+    接続先.execute(
+        """UPDATE skill_categories SET name = '基礎体力' WHERE name = 'フィジカル'
+           AND NOT EXISTS (SELECT 1 FROM skill_categories AS c WHERE c.team_id = skill_categories.team_id AND c.name = '基礎体力')"""
+    )
 
 
 def 行を辞書に(行: sqlite3.Row | None) -> dict | None:

@@ -134,18 +134,18 @@ def デモチームを作成(接続先: sqlite3.Connection) -> str:
                     (チームID, p, c["id"], 乱数.randint(30, 85), p, 時刻),
                 )
 
-    # 佐藤くんはシュートの初級を1つクリア済み
+    # 佐藤くんはシュートの基礎を1つクリア済み
     最初のドリル = 接続先.execute(
         """SELECT d.id FROM drill_steps d JOIN skill_categories c ON c.id = d.category_id
            WHERE d.team_id = ? AND c.name = 'シュート' ORDER BY d.id LIMIT 2""",
         (チームID,),
     ).fetchall()
     接続先.execute(
-        "INSERT INTO player_step_progress (player_id, drill_id, team_id, status, self_rating, report, updated_at) VALUES (?, ?, ?, '完了', 4, '10本中8本入った', ?)",
+        "INSERT INTO player_step_progress (player_id, drill_id, team_id, status, self_rating, report, updated_at) VALUES (?, ?, ?, '完了', 4, '20回まっすぐ手に戻った', ?)",
         (選手ID[0], 最初のドリル[0][0], チームID, 時刻),
     )
     接続先.execute(
-        "INSERT INTO step_reports (team_id, player_id, drill_id, date, self_rating, comment, cleared, created_at) VALUES (?, ?, ?, ?, 4, '10本中8本入った', 1, ?)",
+        "INSERT INTO step_reports (team_id, player_id, drill_id, date, self_rating, comment, cleared, created_at) VALUES (?, ?, ?, ?, 4, '20回まっすぐ手に戻った', 1, ?)",
         (チームID, 選手ID[0], 最初のドリル[0][0], (本日 - timedelta(days=2)).isoformat(), 時刻),
     )
     for 差 in (1, 3, 4, 6):

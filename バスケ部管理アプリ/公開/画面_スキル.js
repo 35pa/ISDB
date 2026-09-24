@@ -6,7 +6,11 @@ import {
 } from './共通.js';
 import { レーダーチャート, 進捗バー } from './図表.js';
 
-const レベルの色 = { 初級: '薄', 中級: '注意', 上級: '良', 未診断: '薄' };
+// サーバー（スキル診断.py）と同じ5段階。下限の値以上でそのレベル
+const レベル一覧 = [['基礎', 0], ['初級', 20], ['中級', 40], ['上級', 60], ['プロ', 80]];
+const レベルの色 = { 基礎: 'Lv基礎', 初級: 'Lv初級', 中級: 'Lv中級', 上級: 'Lv上級', プロ: 'Lvプロ', 未診断: '薄' };
+const レベル名 = (値) => [...レベル一覧].reverse().find(([, 下限]) => 値 >= 下限)[0];
+const レベルの目安 = `目安：${レベル一覧.map(([名前, 下限], i) => `${下限}〜${i + 1 < レベル一覧.length ? レベル一覧[i + 1][1] - 1 : 100}＝${名前}`).join('、')}`;
 const 状態の印 = { 完了: '✅', 実施中: '▶️', 未着手: '⬜' };
 
 async function 能力値を入力(選手ID, 診断) {
@@ -19,7 +23,7 @@ async function 能力値を入力(選手ID, 診断) {
       const 範囲 = h('input', { type: 'range', min: 0, max: 100, step: 5, value: 前回 ?? 50, 'aria-label': d.name });
       const 更新 = () => {
         表示.textContent = 前回 === null && !入力[d.category_id].変更 ? '未評価'
-          : `${範囲.value}（${範囲.value >= 70 ? '上級' : 範囲.value >= 40 ? '中級' : '初級'}）${入力[d.category_id].変更 ? '' : ' 前回'}`;
+          : `${範囲.value}（${レベル名(Number(範囲.value))}）${入力[d.category_id].変更 ? '' : ' 前回'}`;
       };
       入力[d.category_id] = { 範囲, 変更: false };
       範囲.addEventListener('input', () => { 入力[d.category_id].変更 = true; 更新(); });
@@ -27,7 +31,7 @@ async function 能力値を入力(選手ID, 診断) {
       return h('div', { class: '評価行' }, h('div', { class: '行 間' }, h('span', {}, d.name), 表示), 範囲);
     });
     return [
-      h('p', { class: '補足' }, '0〜100で評価します。目安：40未満＝初級、40〜69＝中級、70以上＝上級'),
+      h('p', { class: '補足' }, `0〜100で評価します。${レベルの目安}`),
       ...行一覧,
       h('button', {
         class: 'ボタン 大',
@@ -121,11 +125,11 @@ export async function スキル画面(id) {
     h('section', { class: 'カード' },
       h('div', { class: '行 間' }, h('h2', {}, '🧭 能力値'), h('button', { class: 'ボタン 小', onclick: () => 能力値を入力(id, 診断) }, コーチ ? 'コーチ評価を入力' : '自己評価を入力')),
       診断済み ? レーダーチャート(名前, [
-        { 名前: '総合', 値: 診断.map((d) => d.value), 色: 'var(--系列1)', 塗り: 0.25 },
+        { 名前: '総合', 値: 診断.map((d) => d.value), 色: 'var(--系列1)', 塗り: 0.25, 数値: true },
         { 名前: 'コーチ', 値: 診断.map((d) => d.coach), 色: 'var(--系列2)', 塗り: 0, 破線: true },
         { 名前: '自己評価', 値: 診断.map((d) => d.self), 色: 'var(--系列3)', 塗り: 0, 破線: true },
         { 名前: 'スタッツ', 値: 診断.map((d) => d.stats), 色: 'var(--系列4)', 塗り: 0, 破線: true },
-      ]) : 空表示('まだ診断されていません。評価を入力するとレーダーチャートと次の練習が表示されます'),
+      ], { 目盛: レベル一覧.map(([名前, 下限]) => [下限 + 10, 名前]) }) : 空表示('まだ診断されていません。評価を入力するとレーダーチャートと次の練習が表示されます'),
       h('div', { class: '表の枠' }, h('table', { class: '表 スキル表' },
         h('thead', {}, h('tr', {}, ['スキル', '総合', 'レベル', 'コーチ', '自己', 'スタッツ'].map((c) => h('th', {}, c)))),
         h('tbody', {}, 診断.map((d) => h('tr', {},
@@ -133,7 +137,7 @@ export async function スキル画面(id) {
           h('td', {}, h('strong', {}, d.value ?? '—')),
           h('td', {}, バッジ(d.level, レベルの色[d.level])),
           h('td', {}, d.coach ?? '—'), h('td', {}, d.self ?? '—'), h('td', {}, d.stats ?? '—')))))),
-      h('small', {}, `総合＝コーチ${スキル.weights['コーチ'] * 100}%・スタッツ${スキル.weights['スタッツ'] * 100}%・自己評価${スキル.weights['自己評価'] * 100}%（入力された分だけで計算）`),
+      h('small', {}, `総合＝コーチ${スキル.weights['コーチ'] * 100}%・スタッツ${スキル.weights['スタッツ'] * 100}%・自己評価${スキル.weights['自己評価'] * 100}%（入力された分だけで計算）。${レベルの目安}`),
       差の警告.length ? h('p', { class: '注意書き' }, `⚠️ 自己評価とコーチ評価に大きな差があります：${差の警告.map((d) => `${d.name}（${d.gap > 0 ? '自己評価が高め' : '自己評価が低め'}）`).join('、')}。コーチと話してみよう`) : null),
 
     h('h2', { class: '節見出し' }, '🪜 次に取り組む練習'),
@@ -191,11 +195,23 @@ export async function ステップ一覧表画面() {
 
 // ---------- ドリル管理（コーチ） ----------
 
+// アプリの更新で増えた標準データのうち、チームにないものだけを追加する（設定画面からも使う）
+export async function 標準データを追加(完了後) {
+  if (!(await 確認('アプリに入っている標準のスキル・ドリル（基礎〜プロ）・作戦テンプレートのうち、まだチームにないものを追加します。今あるデータは消えません（ドリルはレベル順に並び直します）。', '追加する'))) return;
+  try {
+    const r = await api('POST', '/api/team/standard-data', {});
+    通知(r.drills || r.tactics || r.categories
+      ? `追加しました（スキル${r.categories}・ドリル${r.drills}・作戦テンプレート${r.tactics}）`
+      : 'すべて追加済みです');
+    完了後?.();
+  } catch (エラー) { エラー通知(エラー); }
+}
+
 async function ドリル編集(カテゴリ一覧, ドリル一覧, 既存 = null, 初期 = {}) {
   const 保存 = await シート(既存 ? 'ドリルを編集' : 'ドリルを追加', (閉じる) => [
     フォーム([
       { 名前: 'category_id', ラベル: 'スキル', 種類: 'select', 選択肢: カテゴリ一覧.map((c) => [c.id, c.name]) },
-      { 名前: 'level', ラベル: 'レベル', 種類: 'select', 選択肢: ['初級', '中級', '上級'] },
+      { 名前: 'level', ラベル: 'レベル', 種類: 'select', 選択肢: レベル一覧.map(([名前]) => 名前) },
       { 名前: 'step_no', ラベル: 'レベル内の順番', 種類: 'number', 最小: 1, 最大値: 100, 入力モード: 'numeric' },
       { 名前: 'title', ラベル: 'ドリル名', 必須: true },
       { 名前: 'content', ラベル: 'やり方', 種類: 'textarea', 行数: 4 },
@@ -206,7 +222,7 @@ async function ドリル編集(カテゴリ一覧, ドリル一覧, 既存 = nul
       const 本文 = { ...v, category_id: Number(v.category_id), next_step_id: v.next_step_id ? Number(v.next_step_id) : null, insert_after_id: 初期.insert_after_id };
       if (既存) await api('PUT', `/api/drills/${既存.id}`, 本文); else await api('POST', '/api/drills', 本文);
       閉じる(true);
-    }, { 値: 既存 || { minutes: 10, step_no: 1, level: '初級', ...初期 } }),
+    }, { 値: 既存 || { minutes: 10, step_no: 1, level: レベル一覧[0][0], ...初期 } }),
     既存 ? h('button', {
       class: 'ボタン 危険 大',
       onclick: async () => {
@@ -243,7 +259,8 @@ export async function ドリル管理画面() {
   };
   描画(
     見出し('ステップドリル管理', h('button', { class: 'ボタン 小', onclick: スキル追加 }, '＋ スキル'), '#/more'),
-    h('p', { class: '補足' }, 'スキル×レベルごとに練習ドリルを段階順に並べます。選手は診断レベルに応じたステップから始まり、クリアすると自動で次のステップへ進みます。'),
+    h('p', { class: '補足' }, `スキル×レベル（基礎→初級→中級→上級→プロ）ごとに練習ドリルを段階順に並べます。選手は診断レベルに応じたステップから始まり、クリアすると自動で次のステップへ進みます。${レベルの目安}`),
+    h('button', { class: 'ボタン 控えめ', onclick: () => 標準データを追加(ドリル管理画面) }, '📥 標準のドリル・作戦テンプレートを追加'),
     カテゴリ.map((c) => {
       const 件 = ドリル.filter((d) => d.category_id === c.id);
       return h('section', { class: 'カード' },
@@ -255,6 +272,6 @@ export async function ドリル管理画面() {
             h('span', { class: '矢印' }, '›')),
           h('button', { class: '差し込み', onclick: () => ドリル編集(カテゴリ, ドリル, null, { category_id: c.id, level: d.level, step_no: d.step_no + 1, insert_after_id: d.id }), 'aria-label': 'この後にドリルを追加' }, '＋ この後に追加'))))
           : 空表示('ドリルがありません'),
-        h('button', { class: 'ボタン 控えめ', onclick: () => ドリル編集(カテゴリ, ドリル, null, { category_id: c.id, insert_after_id: 件.length ? 件[件.length - 1].id : undefined, level: 件.length ? 件[件.length - 1].level : '初級' }) }, '＋ 最後に追加'));
+        h('button', { class: 'ボタン 控えめ', onclick: () => ドリル編集(カテゴリ, ドリル, null, { category_id: c.id, insert_after_id: 件.length ? 件[件.length - 1].id : undefined, level: 件.length ? 件[件.length - 1].level : レベル一覧[0][0] }) }, '＋ 最後に追加'));
     }));
 }

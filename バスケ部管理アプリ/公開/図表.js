@@ -59,8 +59,9 @@ export function シュートチャート(エリア一覧, { 選択中 = null, �
     }));
 }
 
-// 系列 [{名前, 値: [0-100 or null...], 色}]、軸名 [..]
-export function レーダーチャート(軸名, 系列) {
+// 系列 [{名前, 値: [0-100 or null...], 色, 数値: 各点に値を表示するか}]、軸名 [..]
+// 目盛 [[値, 名前], ...]：同心円の帯に名前（例：レベル）を表示する
+export function レーダーチャート(軸名, 系列, { 目盛 = [] } = {}) {
   const n = 軸名.length;
   const 中心 = 150;
   const 半径 = 100;
@@ -75,6 +76,11 @@ export function レーダーチャート(軸名, 系列) {
         points: 軸名.map((_, i) => 点(i, 段).join(',')).join(' '),
         fill: 'none', stroke: 'var(--罫線)', 'stroke-width': 1,
       })),
+      // 目盛の名前は軸と重ならないよう、最初の2本の軸のちょうど間に並べる
+      目盛.map(([値, 名前]) => {
+        const 角 = -Math.PI / 2 + Math.PI / n;
+        return s('text', { x: 中心 + Math.cos(角) * 半径 * (値 / 100), y: 中心 + Math.sin(角) * 半径 * (値 / 100) + 3, 'text-anchor': 'middle', class: '目盛名' }, 名前);
+      }),
       軸名.map((名前, i) => {
         const [x, y] = 点(i, 100);
         const [lx, ly] = 点(i, 122);
@@ -87,7 +93,13 @@ export function レーダーチャート(軸名, 系列) {
         const 座標 = 系.値.map((v, i) => 点(i, v ?? 0));
         return s('g', {},
           s('polygon', { points: 座標.map((p) => p.join(',')).join(' '), fill: 系.色, 'fill-opacity': 系.塗り ?? 0.15, stroke: 系.色, 'stroke-width': 2.5, 'stroke-dasharray': 系.破線 ? '5 4' : null }),
-          座標.map(([x, y], i) => (系.値[i] === null || 系.値[i] === undefined ? null : s('circle', { cx: x, cy: y, r: 3.5, fill: 系.色 }))));
+          座標.map(([x, y], i) => (系.値[i] === null || 系.値[i] === undefined ? null : s('circle', { cx: x, cy: y, r: 3.5, fill: 系.色 }))),
+          系.数値 ? 系.値.map((v, i) => {
+            if (v === null || v === undefined) return null;
+            // 点より少し外側（中心から離れる向き）に値を書く。100付近は軸名と重ならないよう内側へ
+            const [x, y] = 点(i, v > 80 ? v - 16 : v + 16);
+            return s('text', { x, y: y + 4, 'text-anchor': 'middle', class: '軸の値' }, v);
+          }) : null);
       })),
     h('figcaption', { class: '凡例' }, 系列.map((系) => h('span', {}, h('i', { style: { background: 系.色 } }), 系.名前))));
 }

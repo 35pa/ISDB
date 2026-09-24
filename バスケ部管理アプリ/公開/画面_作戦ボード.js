@@ -13,6 +13,12 @@ const 線の名前 = { move: '移動', dribble: 'ドリブル', pass: 'パス', 
 const 理解度 = ['よく分からない', 'だいたい分かった', '理解した'];
 const 理解度の色 = ['悪', '注意', '良'];
 let 一覧の絞り込み = 'すべて';
+let テンプレートの分類 = 'すべて';
+
+// タイトル先頭の【】を分類として扱う（例：【セットプレー】ピック&ロール）
+function 分類(戦術) {
+  return 戦術.title.match(/^【([^】]+)】/)?.[1] || 'その他';
+}
 
 // ---------- 描画 ----------
 
@@ -196,16 +202,22 @@ function PDFで出力(戦術) {
 export async function 戦術一覧画面() {
   const 戦術 = await api('GET', '/api/tactics');
   const 絞り込み = 一覧の絞り込み;
+  const 分類一覧 = [...new Set(戦術.filter((t) => t.is_template).map(分類))];
+  if (!分類一覧.includes(テンプレートの分類)) テンプレートの分類 = 'すべて';
   const 対象 = 戦術.filter((t) => (絞り込み === 'すべて' ? !t.is_template || コーチか()
-    : 絞り込み === 'テンプレート' ? t.is_template : t.kind === 絞り込み && !t.is_template));
+    : 絞り込み === 'テンプレート' ? t.is_template && (テンプレートの分類 === 'すべて' || 分類(t) === テンプレートの分類)
+      : t.kind === 絞り込み && !t.is_template));
   const 新規作成 = async () => {
     const テンプレート = 戦術.filter((t) => t.is_template);
     const 選択 = await シート('新しい戦術', (閉じる) => [
       h('button', { class: 'ボタン 大', onclick: () => 閉じる('空') }, '白紙から作る'),
       テンプレート.length ? h('h3', { class: 'フォーム小見出し' }, 'テンプレートから作る') : null,
-      h('div', { class: 'リスト' }, テンプレート.map((t) => h('button', { class: 'リスト項目', onclick: () => 閉じる(t.id) },
-        h('div', { class: 'ミニボード' }, ボードSVG(t.data.frames[0])),
-        h('div', { class: '伸びる' }, h('strong', {}, t.title), h('small', {}, `${t.kind} ・ ${t.data.frames.length}コマ`))))),
+      分類一覧.map((名前) => [
+        h('h4', { class: 'テンプレート分類' }, 名前),
+        h('div', { class: 'リスト' }, テンプレート.filter((t) => 分類(t) === 名前).map((t) => h('button', { class: 'リスト項目', onclick: () => 閉じる(t.id) },
+          h('div', { class: 'ミニボード' }, ボードSVG(t.data.frames[0])),
+          h('div', { class: '伸びる' }, h('strong', {}, t.title), h('small', {}, `${t.kind} ・ ${t.data.frames.length}コマ`))))),
+      ]),
     ]);
     if (選択 === '空') location.hash = '#/tactics/new';
     else if (選択) {
@@ -219,6 +231,8 @@ export async function 戦術一覧画面() {
     見出し('作戦ボード', コーチか() ? h('button', { class: 'ボタン 小', onclick: 新規作成 }, '＋ 作成') : null),
     オフライン注記(戦術),
     タブ([['すべて', 'すべて'], ['オフェンス', 'オフェンス'], ['ディフェンス', 'ディフェンス'], ['テンプレート', 'テンプレ']], 絞り込み, (v) => { 一覧の絞り込み = v; 戦術一覧画面(); }),
+    絞り込み === 'テンプレート' && 分類一覧.length > 1 ? h('div', { class: '分類タブ' },
+      タブ([['すべて', 'すべて'], ...分類一覧.map((名前) => [名前, 名前])], テンプレートの分類, (v) => { テンプレートの分類 = v; 戦術一覧画面(); })) : null,
     対象.length ? h('div', { class: '戦術一覧' }, 対象.map((t) => h('a', { class: 'カード 戦術カード', href: `#/tactics/${t.id}` },
       h('div', { class: 'ミニボード' }, ボードSVG(t.data.frames[0])),
       h('div', { class: '伸びる' },

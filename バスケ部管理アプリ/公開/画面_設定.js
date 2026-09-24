@@ -1,6 +1,7 @@
 // 設定：チーム情報（チームコード）・パスワード変更・ログアウト
 
 import { api, h, 描画, 見出し, コーチか, 通知, 確認, シート, フォーム, ログイン状態を保存, ログイン状態を消去 } from './共通.js';
+import { 標準データを追加 } from './画面_スキル.js';
 
 export async function 設定画面() {
   const 自分 = await api('GET', '/api/me');
@@ -22,7 +23,8 @@ export async function 設定画面() {
           }, { 値: { name: 自分.team.name } }));
           if (名前) { 通知('変更しました'); 設定画面(); }
         },
-      }, 'チーム名を変更') : null),
+      }, 'チーム名を変更') : null,
+      コーチか() ? h('button', { class: 'ボタン 控えめ', onclick: () => 標準データを追加() }, '📥 標準のドリル・作戦テンプレートを追加') : null),
     h('section', { class: 'カード' },
       h('h2', {}, 'アカウント'),
       h('p', {}, `${自分.user.name}（ログインID：${自分.user.login_id}）`),

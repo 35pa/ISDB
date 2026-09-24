@@ -134,7 +134,7 @@ def 戦術一覧(リクエスト_: リクエスト):
                    (SELECT COUNT(*) FROM tactic_checks x JOIN users xu ON xu.id = x.user_id AND xu.active = 1
                       WHERE x.tactic_id = t.id AND x.understood = 2) AS understood_count
                 FROM tactics t LEFT JOIN tactic_checks c ON c.tactic_id = t.id AND c.user_id = ?
-                WHERE {' AND '.join(条件)} ORDER BY t.is_template, t.updated_at DESC""",
+                WHERE {' AND '.join(条件)} ORDER BY t.is_template, t.updated_at DESC, t.id""",
             引数,
         ).fetchall()
     )

@@ -14,8 +14,13 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+import sqlite3
+
+import データベース
 import スキル診断
+import 初期データ
 import 集計
+from API_戦術 import 図データを検証
 from サーバー import サーバーを作成
 
 
@@ -25,10 +30,18 @@ from サーバー import サーバーを作成
 class スキル診断のテスト(unittest.TestCase):
     def test_レベル判定(self):
         self.assertEqual(スキル診断.レベル判定(None), "未診断")
-        self.assertEqual(スキル診断.レベル判定(39), "初級")
-        self.assertEqual(スキル診断.レベル判定(40), "中級")
-        self.assertEqual(スキル診断.レベル判定(69), "中級")
-        self.assertEqual(スキル診断.レベル判定(70), "上級")
+        境目 = {0: "基礎", 19: "基礎", 20: "初級", 39: "初級", 40: "中級", 59: "中級", 60: "上級", 79: "上級", 80: "プロ", 100: "プロ"}
+        for 値, レベル in 境目.items():
+            self.assertEqual(スキル診断.レベル判定(値), レベル, 値)
+
+    def test_レベルの目安は0から100をすき間なく覆う(self):
+        目安 = スキル診断.レベルの目安()
+        self.assertEqual([m["name"] for m in 目安], list(スキル診断.レベル一覧))
+        self.assertEqual((目安[0]["min"], 目安[-1]["max"]), (0, 100))
+        for 前, 次 in zip(目安, 目安[1:]):
+            self.assertEqual(前["max"] + 1, 次["min"])
+        for m in 目安:
+            self.assertEqual({スキル診断.レベル判定(m["min"]), スキル診断.レベル判定(m["max"])}, {m["name"]})
 
     def test_総合値は入力された評価元だけで重み付き平均(self):
         self.assertIsNone(スキル診断.総合値({}))
@@ -43,7 +56,7 @@ class スキル診断のテスト(unittest.TestCase):
         悪い = [{"fga": 10, "fgm": 2, "tpm": 0, "fta": 0, "ftm": 0}] * 3
         self.assertGreater(スキル診断.スタッツから能力値("シュート", 良い), スキル診断.スタッツから能力値("シュート", 悪い))
         self.assertEqual(スキル診断.スタッツから能力値("リバウンド", [{"rebounds": 10}] * 2), 95)
-        self.assertIsNone(スキル診断.スタッツから能力値("フィジカル", [{"points": 10}] * 5))
+        self.assertIsNone(スキル診断.スタッツから能力値("基礎体力", [{"points": 10}] * 5))
 
     def test_優先順位は総合値の低い順に3つ(self):
         カテゴリ = [{"id": i, "name": f"S{i}"} for i in range(1, 6)]
@@ -122,6 +135,77 @@ class 集計のテスト(unittest.TestCase):
         self.assertEqual(結果["active_days"], 2)
         self.assertEqual(結果["longest_streak"], 2)
         self.assertEqual(結果["self_practice_minutes"], 30)
+
+
+class 初期データのテスト(unittest.TestCase):
+    def test_スキルは6項目を基礎からプロまで網羅(self):
+        self.assertEqual(初期データ.スキルカテゴリ, ("ドリブル", "パス", "シュート", "ディフェンス", "基礎体力", "リバウンド"))
+        for カテゴリ in 初期データ.スキルカテゴリ:
+            ドリル = [d for d in 初期データ.ステップドリル if d[0] == カテゴリ]
+            for レベル in スキル診断.レベル一覧:
+                self.assertGreaterEqual(sum(1 for d in ドリル if d[1] == レベル), 3, f"{カテゴリ}・{レベル}")
+            タイトル = [d[2] for d in ドリル]
+            self.assertEqual(len(タイトル), len(set(タイトル)), カテゴリ)
+        for カテゴリ, レベル, タイトル, 内容, 分, 条件 in 初期データ.ステップドリル:
+            self.assertIn(カテゴリ, 初期データ.スキルカテゴリ)
+            self.assertIn(レベル, スキル診断.レベル一覧)
+            self.assertTrue(0 < len(タイトル) <= 60 and 内容 and 条件 and len(条件) <= 200, タイトル)
+            self.assertTrue(0 <= 分 <= 300)
+        # 同じスキル内はレベル順に並べて書く（投入時の段階順と一致させる）
+        for カテゴリ in 初期データ.スキルカテゴリ:
+            順 = [スキル診断.レベル一覧.index(d[1]) for d in 初期データ.ステップドリル if d[0] == カテゴリ]
+            self.assertEqual(順, sorted(順), カテゴリ)
+
+    def test_作戦テンプレートは図データとして正しい(self):
+        テンプレート = 初期データ.戦術テンプレート()
+        self.assertGreaterEqual(len(テンプレート), 20)
+        タイトル = [t[1] for t in テンプレート]
+        self.assertEqual(len(タイトル), len(set(タイトル)))
+        分類 = {タイトル_.split("】")[0].lstrip("【") for タイトル_ in タイトル}
+        self.assertTrue({"フォーメーション", "セットプレー", "リスタート", "速攻", "ゾーン", "マンツー", "プレス"} <= 分類, 分類)
+        for 種別, タイトル_, 説明, 図, クイズ一覧 in テンプレート:
+            with self.subTest(タイトル_):
+                self.assertIn(種別, ("オフェンス", "ディフェンス"))
+                self.assertTrue(タイトル_.startswith("【") and len(タイトル_) <= 60 and 説明)
+                # 検証を通しても何も削られない（座標がコート内・人数・線の数・ボール保持者が正しい）
+                self.assertEqual(図データを検証(図), json.loads(json.dumps(図)) | {"frames": [
+                    {**コマ, "players": [{**p, "x": float(p["x"]), "y": float(p["y"])} for p in コマ["players"]],
+                     "lines": [{**l, "points": [[float(x), float(y)] for x, y in l["points"]]} for l in コマ["lines"]]}
+                    for コマ in 図["frames"]]})
+                for コマ in 図["frames"]:
+                    self.assertTrue(コマ["note"])
+                    self.assertIn(コマ["ball"], {p["id"] for p in コマ["players"]})
+                self.assertTrue(クイズ一覧)
+                for クイズ in クイズ一覧:
+                    self.assertTrue(0 <= クイズ["answer_index"] < len(クイズ["choices"]))
+
+    def test_古いデータベースを新しい形に更新(self):
+        with tempfile.TemporaryDirectory() as 一時:
+            パス = Path(一時) / "旧.sqlite3"
+            旧スキーマ = データベース.スキーマ.replace("CHECK (level IN ('基礎', '初級', '中級', '上級', 'プロ'))", "CHECK (level IN ('初級', '中級', '上級'))")
+            旧 = sqlite3.connect(パス)
+            旧.executescript(旧スキーマ)
+            旧.execute("INSERT INTO teams (id, name, code, created_at) VALUES (1, 'T', 'ABC', 'x')")
+            旧.execute("INSERT INTO users (id, team_id, login_id, name, role, password_hash, created_at) VALUES (1, 1, 'p', 'P', 'player', 'h', 'x')")
+            旧.execute("INSERT INTO skill_categories (id, team_id, name, sort) VALUES (1, 1, 'フィジカル', 0)")
+            旧.execute("INSERT INTO drill_steps (id, team_id, category_id, level, title) VALUES (1, 1, 1, '初級', 'A'), (2, 1, 1, '上級', 'B')")
+            旧.execute("UPDATE drill_steps SET next_step_id = 2 WHERE id = 1")
+            旧.execute("INSERT INTO player_step_progress (player_id, drill_id, team_id, status, updated_at) VALUES (1, 2, 1, '完了', 'x')")
+            旧.commit()
+            旧.close()
+
+            新 = データベース.接続(パス)
+            データベース.初期化(新)
+            データベース.初期化(新)  # 2回目は何もしない
+            self.assertEqual(新.execute("SELECT name FROM skill_categories").fetchone()[0], "基礎体力")
+            self.assertEqual([tuple(r) for r in 新.execute("SELECT id, level, next_step_id FROM drill_steps ORDER BY id")], [(1, "初級", 2), (2, "上級", None)])
+            新.execute("INSERT INTO drill_steps (team_id, category_id, level, title) VALUES (1, 1, 'プロ', 'C')")
+            self.assertEqual(新.execute("PRAGMA foreign_key_check").fetchall(), [])
+            # ドリルを消すと進捗も消える（外部キーが生きている）
+            新.execute("DELETE FROM drill_steps WHERE id = 2")
+            self.assertEqual(新.execute("SELECT COUNT(*) FROM player_step_progress").fetchone()[0], 0)
+            self.assertIsNone(新.execute("SELECT next_step_id FROM drill_steps WHERE id = 1").fetchone()[0])
+            新.close()
 
 
 # ---------- API（実際にサーバーを起動して確認） ----------
@@ -350,6 +434,33 @@ class APIのテスト(unittest.TestCase):
         # カレンダーに報告が反映
         カレンダー = self.呼ぶ("GET", f"/api/players/{選手}/calendar", トークン=選手トークン)
         self.assertGreaterEqual(カレンダー["active_days"], 1)
+
+    def test_新しいチームの標準データと追加取り込み(self):
+        コーチ, コード = self.チームを作る()
+        カテゴリ = self.呼ぶ("GET", "/api/skill-categories", トークン=コーチ)
+        self.assertEqual([c["name"] for c in カテゴリ], list(初期データ.スキルカテゴリ))
+        ドリル = self.呼ぶ("GET", "/api/drills", トークン=コーチ)
+        self.assertEqual(len(ドリル), len(初期データ.ステップドリル))
+        for c in カテゴリ:
+            段階 = スキル診断.ドリルを段階順に並べる(d for d in ドリル if d["category_id"] == c["id"])
+            self.assertEqual([d["level"] for d in 段階], sorted((d["level"] for d in 段階), key=スキル診断.レベル一覧.index))
+            self.assertEqual(sum(1 for d in 段階 if d["next_step_id"] is None), 1)  # 1本の鎖につながっている
+        戦術 = self.呼ぶ("GET", "/api/tactics?kind=すべて", トークン=コーチ)
+        self.assertEqual(len([t for t in 戦術 if t["is_template"]]), len(初期データ.戦術テンプレート()))
+        # 全部そろっていれば何も増えない
+        self.assertEqual(self.呼ぶ("POST", "/api/team/standard-data", {}, コーチ), {"categories": 0, "drills": 0, "tactics": 0})
+        # 消したものだけ戻る。つながりはレベル順のまま
+        シュート = next(c["id"] for c in カテゴリ if c["name"] == "シュート")
+        消す = next(d for d in ドリル if d["category_id"] == シュート and d["level"] == "中級")
+        self.呼ぶ("DELETE", f"/api/drills/{消す['id']}", トークン=コーチ)
+        self.呼ぶ("DELETE", f"/api/tactics/{戦術[0]['id']}", トークン=コーチ)
+        _, 選手トークン = self.選手を追加(コーチ, コード)
+        self.呼ぶ("POST", "/api/team/standard-data", {}, 選手トークン, 期待=403)
+        self.assertEqual(self.呼ぶ("POST", "/api/team/standard-data", {}, コーチ), {"categories": 0, "drills": 1, "tactics": 1})
+        段階 = スキル診断.ドリルを段階順に並べる(self.呼ぶ("GET", f"/api/drills?category_id={シュート}", トークン=コーチ))
+        self.assertEqual([d["level"] for d in 段階], sorted((d["level"] for d in 段階), key=スキル診断.レベル一覧.index))
+        self.assertIn(消す["title"], [d["title"] for d in 段階])
+        self.assertEqual(sum(1 for d in 段階 if d["next_step_id"] is None), 1)
 
     def test_ドリルの追加と削除でつながりを保つ(self):
         コーチ, _ = self.チームを作る()

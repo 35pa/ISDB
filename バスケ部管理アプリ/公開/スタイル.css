@@ -167,6 +167,12 @@ details.カード[open] > summary { margin-bottom: 8px; }
 .バッジ.強調 { background: var(--主); color: #fff; border-color: transparent; }
 .バッジ.味方 { background: color-mix(in srgb, var(--味方) 15%, transparent); color: var(--味方); border-color: transparent; }
 .バッジ.相手 { background: color-mix(in srgb, var(--相手) 15%, transparent); color: var(--相手); border-color: transparent; }
+/* スキルレベル（基礎→プロ）。色は段階が上がるほど濃く */
+.バッジ.Lv基礎 { background: var(--面2); color: var(--薄文字); border-color: var(--罫線); }
+.バッジ.Lv初級 { background: color-mix(in srgb, var(--系列2) 14%, transparent); color: var(--系列2); border-color: transparent; }
+.バッジ.Lv中級 { background: color-mix(in srgb, var(--良) 16%, transparent); color: var(--良); border-color: transparent; }
+.バッジ.Lv上級 { background: color-mix(in srgb, var(--注意) 18%, transparent); color: var(--注意); border-color: transparent; }
+.バッジ.Lvプロ { background: var(--系列4); color: #fff; border-color: transparent; }
 .バッジ列 { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 .バッジ列 .バッジ { margin-left: 0; }
 .良.文字 { color: var(--良); }
@@ -248,8 +254,11 @@ section > textarea, section > input, .カード > textarea, .カード > input, 
 
 /* ---------- タブ ---------- */
 .タブ { display: flex; gap: 4px; padding: 4px; background: var(--面2); border-radius: 12px; margin-bottom: 12px; overflow-x: auto; }
-.タブ項目 { flex: 1; min-height: 38px; border: 0; background: none; border-radius: 9px; font-weight: 700; color: var(--薄文字); white-space: nowrap; padding: 0 10px; cursor: pointer; }
+.タブ項目 { flex: 1; min-height: 38px; border: 0; background: none; border-radius: 9px; font-weight: 700; color: var(--薄文字); white-space: nowrap; padding: 0 6px; cursor: pointer; }
 .タブ項目.選択中 { background: var(--面); color: var(--文字); box-shadow: var(--影); }
+.分類タブ .タブ { margin-top: -4px; }
+.分類タブ .タブ項目 { flex: none; min-height: 32px; font-size: 13px; }
+.テンプレート分類 { margin: 14px 0 6px; font-size: 14px; color: var(--薄文字); }
 
 /* ---------- 進捗バー・タイル ---------- */
 .進捗バー { height: 8px; border-radius: 4px; background: var(--面2); overflow: hidden; margin: 4px 0; border: 1px solid var(--罫線); }
@@ -369,6 +378,8 @@ th.固定列 { background: var(--面2); z-index: 2; }
 .レーダー svg { width: 100%; max-width: 340px; display: block; margin: 0 auto; }
 .折れ線 svg { width: 100%; display: block; }
 .軸名 { font-size: 12px; font-weight: 700; fill: var(--文字); }
+.目盛名 { font-size: 8px; fill: var(--薄文字); }
+.軸の値 { font-size: 12px; font-weight: 800; fill: var(--系列1); paint-order: stroke; stroke: var(--面); stroke-width: 3px; stroke-linejoin: round; }
 .目盛 { font-size: 10px; fill: var(--薄文字); }
 .レーダー figcaption, .折れ線 figcaption { justify-content: center; }
 
