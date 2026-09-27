@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import スキル診断
+import 体力測定
 from データベース import 今日, 現在時刻, 行一覧を辞書に
 from ルーティング import (
     APIエラー,
@@ -91,8 +92,75 @@ def _スタッツ一覧(リクエスト_: リクエスト, 選手ID: int) -> lis
     )
 
 
+def _測定記録(リクエスト_: リクエスト, 選手ID: int) -> list[dict]:
+    return 行一覧を辞書に(
+        リクエスト_.db.execute(
+            """SELECT m.*, u.name AS recorder_name FROM body_measurements m LEFT JOIN users u ON u.id = m.recorder_id
+               WHERE m.player_id = ? AND m.team_id = ? ORDER BY m.measured_on DESC, m.id DESC""",
+            (選手ID, リクエスト_.チームID),
+        ).fetchall()
+    )
+
+
 def 選手の診断(リクエスト_: リクエスト, 選手ID: int) -> list[dict]:
-    return スキル診断.スキル診断(_カテゴリ一覧(リクエスト_), _最新評価(リクエスト_, 選手ID), _スタッツ一覧(リクエスト_, 選手ID))
+    体力 = 体力測定.基礎体力の評価(_測定記録(リクエスト_, 選手ID))
+    return スキル診断.スキル診断(
+        _カテゴリ一覧(リクエスト_), _最新評価(リクエスト_, 選手ID), _スタッツ一覧(リクエスト_, 選手ID), {体力測定.測定で決めるスキル: 体力["score"]}
+    )
+
+
+# ---------- 体力測定（基礎体力は実測値からスコアを出す） ----------
+
+
+@ルート("GET", "/api/players/{選手ID}/measurements")
+def 体力測定の一覧(リクエスト_: リクエスト, 選手ID: int):
+    選手を確認(リクエスト_, 選手ID)
+    記録 = _測定記録(リクエスト_, 選手ID)
+    return {"skill": 体力測定.測定で決めるスキル, **体力測定.基礎体力の評価(記録), "history": 記録[:300]}
+
+
+@ルート("POST", "/api/players/{選手ID}/measurements")
+def 体力測定の登録(リクエスト_: リクエスト, 選手ID: int):
+    """コーチはチームの選手の、選手は自分の測定値を記録する。入力した項目だけ保存する。"""
+    選手を確認(リクエスト_, 選手ID)
+    本文 = リクエスト_.本文
+    測定日 = 日付(本文, "measured_on", "測定日", 必須=False) or 今日()
+    値一覧 = 本文.get("values")
+    if not isinstance(値一覧, dict):
+        raise APIエラー(400, "測定値を入力してください")
+    登録 = []
+    for キー, 値 in 値一覧.items():
+        if キー not in 体力測定.入力する項目:
+            raise APIエラー(400, "測定項目が正しくありません")
+        if 値 in (None, ""):
+            continue
+        名前 = 体力測定.項目[キー]["name"]
+        try:
+            数 = float(値)
+        except (TypeError, ValueError):
+            raise APIエラー(400, f"{名前}は数値で入力してください") from None
+        下限, 上限 = 体力測定.入力範囲[キー]
+        if not 下限 <= 数 <= 上限:
+            raise APIエラー(400, f"{名前}は{下限}〜{上限}の範囲で入力してください")
+        登録.append((キー, 数))
+    if not 登録:
+        raise APIエラー(400, "測定値を1つ以上入力してください")
+    時刻 = 現在時刻()
+    for キー, 数 in 登録:
+        リクエスト_.db.execute(
+            """INSERT INTO body_measurements (team_id, player_id, item, value, measured_on, recorder_id, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (リクエスト_.チームID, 選手ID, キー, 数, 測定日, リクエスト_.ユーザー["id"], 時刻),
+        )
+    return {"count": len(登録), **体力測定.基礎体力の評価(_測定記録(リクエスト_, 選手ID))}
+
+
+@ルート("DELETE", "/api/measurements/{記録ID}")
+def 体力測定の削除(リクエスト_: リクエスト, 記録ID: int):
+    記録 = チーム内の行(リクエスト_, "body_measurements", 記録ID, "測定記録")
+    選手を確認(リクエスト_, 記録["player_id"])
+    リクエスト_.db.execute("DELETE FROM body_measurements WHERE id = ?", (記録ID,))
+    return {"ok": True}
 
 
 @ルート("GET", "/api/players/{選手ID}/skills")

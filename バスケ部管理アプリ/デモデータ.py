@@ -134,6 +134,24 @@ def デモチームを作成(接続先: sqlite3.Connection) -> str:
                     (チームID, p, c["id"], 乱数.randint(30, 85), p, 時刻),
                 )
 
+    # 体力測定（1か月前と今月）。最初の5人だけ記録あり、残りは未測定
+    for 番号, p in enumerate(選手ID[:5]):
+        身長 = 乱数.uniform(165, 190)
+        指高 = round(身長 * 1.31)
+        for 何か月前, 伸び in ((1, 0), (0, 1)):
+            測定日 = (本日 - timedelta(days=30 * 何か月前 + 番号)).isoformat()
+            垂直 = 乱数.randint(45, 65) + 3 * 伸び
+            for 項目, 値 in (
+                ("height", round(身長 + 0.3 * 伸び, 1)), ("weight", round(乱数.uniform(55, 80), 1)),
+                ("standing_reach", 指高), ("jump_reach", 指高 + 垂直),
+                ("standing_long_jump", 乱数.randint(210, 260)), ("pro_agility", round(乱数.uniform(4.8, 5.6) - 0.1 * 伸び, 2)),
+                ("shuttle_17", round(乱数.uniform(55, 64) - 伸び, 1)),
+            ):
+                接続先.execute(
+                    "INSERT INTO body_measurements (team_id, player_id, item, value, measured_on, recorder_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (チームID, p, 項目, 値, 測定日, コーチID, 時刻),
+                )
+
     # 佐藤くんはシュートの基礎を1つクリア済み
     最初のドリル = 接続先.execute(
         """SELECT d.id FROM drill_steps d JOIN skill_categories c ON c.id = d.category_id

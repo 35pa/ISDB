@@ -18,6 +18,7 @@ import sqlite3
 
 import データベース
 import スキル診断
+import 体力測定
 import 初期データ
 import 集計
 from API_戦術 import 図データを検証
@@ -137,10 +138,58 @@ class 集計のテスト(unittest.TestCase):
         self.assertEqual(結果["self_practice_minutes"], 30)
 
 
+class 体力測定のテスト(unittest.TestCase):
+    def test_実測値をスコアに換算(self):
+        self.assertEqual(体力測定.項目スコア("jump_reach", 285), 50)
+        self.assertEqual(体力測定.項目スコア("jump_reach", 400), 100)
+        self.assertEqual(体力測定.項目スコア("jump_reach", 200), 0)
+        self.assertEqual(体力測定.項目スコア("pro_agility", 5.2), 50)  # タイムは小さいほど高い
+        self.assertEqual(体力測定.項目スコア("pro_agility", 4.0), 100)
+        self.assertIsNone(体力測定.項目スコア("height", 180))  # 身長は記録のみ
+        self.assertIsNone(体力測定.項目スコア("weight", None))
+
+    def test_垂直跳びは同じ日の到達点と指高から計算(self):
+        記録 = [
+            {"id": 1, "item": "standing_reach", "value": 225, "measured_on": "2026-04-01"},
+            {"id": 2, "item": "jump_reach", "value": 280, "measured_on": "2026-04-01"},
+            {"id": 3, "item": "jump_reach", "value": 290, "measured_on": "2026-05-01"},  # 指高を測っていない日
+        ]
+        最新 = 体力測定.最新の測定値(記録)
+        self.assertEqual(最新["jump_reach"]["value"], 290)
+        self.assertEqual(最新["vertical_jump"], {"value": 55, "measured_on": "2026-04-01"})
+
+    def test_基礎体力スコアは測った項目の平均(self):
+        記録 = [
+            {"item": "height", "value": 180, "measured_on": "2026-04-01"},
+            {"item": "jump_reach", "value": 285, "measured_on": "2026-04-01"},  # 50点
+            {"item": "weight", "value": 70, "measured_on": "2026-04-01"},  # 50点
+            {"item": "shuttle_17", "value": 56, "measured_on": "2026-04-01"},  # 80点
+        ]
+        結果 = 体力測定.基礎体力の評価(記録)
+        self.assertEqual(結果["score"], 60)
+        self.assertEqual(結果["scored_count"], 3)
+        self.assertIsNone(体力測定.基礎体力の評価([])["score"])
+
+    def test_測定スコアがあれば基礎体力の総合値になる(self):
+        カテゴリ = [{"id": 1, "name": "基礎体力"}, {"id": 2, "name": "パス"}]
+        評価 = {1: {"コーチ": 90, "自己評価": 90}, 2: {"コーチ": 40}}
+        結果 = {d["name"]: d for d in スキル診断.スキル診断(カテゴリ, 評価, [], {"基礎体力": 35})}
+        self.assertEqual(結果["基礎体力"]["value"], 35)
+        self.assertEqual(結果["基礎体力"]["level"], "初級")
+        self.assertEqual(結果["基礎体力"]["measure"], 35)
+        self.assertEqual(結果["パス"]["value"], 40)
+        # 測定がなければ今までどおり評価の加重平均
+        self.assertEqual({d["name"]: d for d in スキル診断.スキル診断(カテゴリ, 評価, [], {"基礎体力": None})}["基礎体力"]["value"], 90)
+
+
 class 初期データのテスト(unittest.TestCase):
     def test_スキルは6項目を基礎からプロまで網羅(self):
         self.assertEqual(初期データ.スキルカテゴリ, ("ドリブル", "パス", "シュート", "ディフェンス", "基礎体力", "リバウンド"))
+        # 基礎体力はドリルではなく体力測定の実測値で判定する
+        self.assertFalse([d for d in 初期データ.ステップドリル if d[0] == 体力測定.測定で決めるスキル])
         for カテゴリ in 初期データ.スキルカテゴリ:
+            if カテゴリ == 体力測定.測定で決めるスキル:
+                continue
             ドリル = [d for d in 初期データ.ステップドリル if d[0] == カテゴリ]
             for レベル in スキル診断.レベル一覧:
                 self.assertGreaterEqual(sum(1 for d in ドリル if d[1] == レベル), 3, f"{カテゴリ}・{レベル}")
@@ -440,6 +489,35 @@ class APIのテスト(unittest.TestCase):
         カレンダー = self.呼ぶ("GET", f"/api/players/{選手}/calendar", トークン=選手トークン)
         self.assertGreaterEqual(カレンダー["active_days"], 1)
 
+    def test_体力測定から基礎体力を判定(self):
+        コーチ, コード = self.チームを作る()
+        選手, 選手トークン = self.選手を追加(コーチ, コード)
+        他の選手, 他トークン = self.選手を追加(コーチ, コード, "player2", "選手B")
+        # 選手は自分の測定値を記録できる（入力した項目だけ保存）
+        結果 = self.呼ぶ("POST", f"/api/players/{選手}/measurements", {"measured_on": "2026-04-01", "values": {"height": 180, "standing_reach": 230, "jump_reach": 285, "weight": "", "shuttle_17": 56}}, 選手トークン)
+        self.assertEqual(結果["count"], 4)
+        self.assertEqual(結果["score"], 60)  # 最高到達点50点・垂直跳び55cm＝50点・17往復80点の平均
+        垂直 = next(i for i in 結果["items"] if i["key"] == "vertical_jump")
+        self.assertEqual((垂直["value"], 垂直["derived"]), (55, True))
+        診断 = {d["name"]: d for d in self.呼ぶ("GET", f"/api/players/{選手}/skills", トークン=選手トークン)["diagnosis"]}
+        self.assertEqual((診断["基礎体力"]["value"], 診断["基礎体力"]["measure"], 診断["基礎体力"]["level"]), (60, 60, "上級"))
+        # コーチも記録できる。範囲外・他の選手の記録・計算で出す項目はエラー
+        self.呼ぶ("POST", f"/api/players/{選手}/measurements", {"values": {"weight": 70}}, コーチ)
+        self.呼ぶ("POST", f"/api/players/{選手}/measurements", {"values": {"weight": 500}}, コーチ, 期待=400)
+        self.呼ぶ("POST", f"/api/players/{選手}/measurements", {"values": {"vertical_jump": 60}}, コーチ, 期待=400)
+        self.呼ぶ("POST", f"/api/players/{選手}/measurements", {"values": {}}, コーチ, 期待=400)
+        self.呼ぶ("POST", f"/api/players/{選手}/measurements", {"values": {"weight": 60}}, 他トークン, 期待=403)
+        self.呼ぶ("GET", f"/api/players/{選手}/measurements", トークン=他トークン, 期待=403)
+        一覧 = self.呼ぶ("GET", f"/api/players/{選手}/measurements", トークン=選手トークン)
+        self.assertEqual(一覧["score"], 58)  # 体重70kg（50点）が加わる
+        self.assertEqual(len(一覧["history"]), 5)
+        # 記録を消すとスコアも戻る。他の選手の記録は消せない
+        体重 = next(r for r in 一覧["history"] if r["item"] == "weight")
+        self.呼ぶ("DELETE", f"/api/measurements/{体重['id']}", トークン=他トークン, 期待=403)
+        self.呼ぶ("DELETE", f"/api/measurements/{体重['id']}", トークン=選手トークン)
+        self.assertEqual(self.呼ぶ("GET", f"/api/players/{選手}/measurements", トークン=コーチ)["score"], 60)
+        self.assertEqual(self.呼ぶ("GET", f"/api/players/{他の選手}/measurements", トークン=他トークン)["score"], None)
+
     def test_新しいチームの標準データと追加取り込み(self):
         コーチ, コード = self.チームを作る()
         カテゴリ = self.呼ぶ("GET", "/api/skill-categories", トークン=コーチ)
@@ -448,6 +526,9 @@ class APIのテスト(unittest.TestCase):
         self.assertEqual(len(ドリル), len(初期データ.ステップドリル))
         for c in カテゴリ:
             段階 = スキル診断.ドリルを段階順に並べる(d for d in ドリル if d["category_id"] == c["id"])
+            if c["name"] == 体力測定.測定で決めるスキル:
+                self.assertEqual(段階, [])  # 基礎体力はドリルなし（体力測定で判定）
+                continue
             self.assertEqual([d["level"] for d in 段階], sorted((d["level"] for d in 段階), key=スキル診断.レベル一覧.index))
             self.assertEqual(sum(1 for d in 段階 if d["next_step_id"] is None), 1)  # 1本の鎖につながっている
         戦術 = self.呼ぶ("GET", "/api/tactics?kind=すべて", トークン=コーチ)

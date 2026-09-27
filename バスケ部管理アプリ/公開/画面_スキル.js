@@ -47,6 +47,63 @@ async function 能力値を入力(選手ID, 診断) {
   if (保存) { 通知('保存しました。次の練習メニューを更新しました'); スキル画面(選手ID); }
 }
 
+// ---------- 体力測定（基礎体力は実測値からスコアを出す） ----------
+
+const 値の表示 = (項目) => (項目.value === null ? '—' : `${項目.value}${項目.unit}`);
+
+async function 測定値を入力(選手ID, 測定) {
+  const 入力項目 = 測定.items.filter((i) => !i.derived);
+  const 保存 = await シート('体力測定の記録', (閉じる) => [
+    h('p', { class: '補足' }, '測った項目だけ入力してください。空欄の項目は前回の記録のまま使います。垂直跳びは「最高到達点 − 指高」で自動計算します（同じ日に両方を測ったとき）。'),
+    フォーム([
+      { 名前: 'measured_on', ラベル: '測定日', 種類: 'date' },
+      ...入力項目.map((i) => ({
+        名前: i.key, ラベル: `${i.name}（${i.unit}）`, 種類: 'number', 刻み: i.digits ? 10 ** -i.digits : 1, 入力モード: 'decimal',
+        例: i.value !== null ? `前回 ${i.value}` : '', 補足: i.how,
+      })),
+    ], async (v) => {
+      const values = Object.fromEntries(入力項目.map((i) => [i.key, v[i.key]]).filter(([, x]) => x !== null));
+      if (!Object.keys(values).length) { 通知('測定値を1つ以上入力してください', '注意'); return; }
+      await api('POST', `/api/players/${選手ID}/measurements`, { measured_on: v.measured_on, values });
+      閉じる(true);
+    }, { 送信文言: '記録する', 値: { measured_on: 今日の日付() } }),
+  ]);
+  if (保存) { 通知('記録しました。基礎体力のスコアを更新しました'); スキル画面(選手ID); }
+}
+
+function 体力測定カード(選手ID, 測定, { 記録できる }) {
+  const 名前 = Object.fromEntries(測定.items.map((i) => [i.key, i]));
+  const 削除 = async (r) => {
+    if (!(await 確認(`${日付表示(r.measured_on)} の「${名前[r.item]?.name ?? r.item}」の記録を削除しますか？`, '削除', true))) return;
+    try { await api('DELETE', `/api/measurements/${r.id}`); 通知('削除しました'); スキル画面(選手ID); } catch (エラー) { エラー通知(エラー); }
+  };
+  return h('section', { class: 'カード' },
+    h('div', { class: '行 間' },
+      h('h2', {}, `📏 体力測定（${測定.skill}）`),
+      記録できる ? h('button', { class: 'ボタン 小', onclick: () => 測定値を入力(選手ID, 測定) }, '測定値を記録') : null),
+    h('p', { class: '補足' },
+      測定.score !== null
+        ? [`${測定.skill}スコア `, h('strong', { class: '大きい数' }, 測定.score), `（${測定.scored_count}項目の平均）。レーダーチャートの${測定.skill}はこの値で判定します`]
+        : `まだ測定値がありません。記録すると、実測値から${測定.skill}のスコアを出してレーダーチャートに反映します（それまではコーチ評価・自己評価で判定）`),
+    h('div', { class: '表の枠' }, h('table', { class: '表 測定表' },
+      h('thead', {}, h('tr', {}, ['項目', '実測値', 'スコア'].map((c) => h('th', {}, c)))),
+      h('tbody', {}, 測定.items.map((i) => h('tr', {},
+        h('td', {}, i.name),
+        h('td', {}, h('strong', {}, 値の表示(i)), i.measured_on ? h('small', { class: 'ブロック' }, 日付表示(i.measured_on)) : null),
+        h('td', {}, i.scored ? h('strong', {}, i.score ?? '—') : h('small', {}, '記録のみ'))))))),
+    h('small', {}, 'スコア＝実測値を「0点の値〜100点の値」の間で比例換算（範囲外は0点・100点）。',
+      測定.items.filter((i) => i.scored).map((i) => `${i.name} ${i.zero}→${i.full}${i.unit}`).join('、'),
+      '。身長・指高は最高到達点に含まれるため記録のみ'),
+    h('details', {}, h('summary', {}, '測り方'),
+      h('dl', { class: '測り方' }, 測定.items.flatMap((i) => [h('dt', {}, i.name), h('dd', {}, i.how)]))),
+    測定.history.length ? h('details', {}, h('summary', {}, `測定の記録（${測定.history.length}件）`),
+      h('div', { class: 'リスト' }, 測定.history.map((r) => h('div', { class: 'リスト項目' },
+        h('div', { class: '伸びる' },
+          h('strong', {}, `${名前[r.item]?.name ?? r.item}：${r.value}${名前[r.item]?.unit ?? ''}`),
+          h('small', {}, `${日付表示(r.measured_on)} ・ ${r.recorder_name || ''}`)),
+        記録できる ? h('button', { class: 'ボタン 控えめ 小', onclick: () => 削除(r) }, '削除') : null)))) : null);
+}
+
 async function 完了報告(選手ID, ドリル) {
   const 結果 = await シート('練習の報告', (閉じる) => [
     h('p', {}, h('strong', {}, ドリル.title)),
@@ -109,8 +166,9 @@ async function ステップを調整(選手ID, カテゴリ, ステップ) {
 }
 
 export async function スキル画面(id) {
-  const [スキル, ステップ, 選手] = await Promise.all([
+  const [スキル, ステップ, 選手, 測定] = await Promise.all([
     api('GET', `/api/players/${id}/skills`), api('GET', `/api/players/${id}/steps`), api('GET', `/api/members/${id}`),
+    api('GET', `/api/players/${id}/measurements`),
   ]);
   const 本人 = 状態.ユーザー.id === id;
   const コーチ = コーチか();
@@ -133,12 +191,14 @@ export async function スキル画面(id) {
       h('div', { class: '表の枠' }, h('table', { class: '表 スキル表' },
         h('thead', {}, h('tr', {}, ['スキル', '総合', 'レベル', 'コーチ', '自己', 'スタッツ'].map((c) => h('th', {}, c)))),
         h('tbody', {}, 診断.map((d) => h('tr', {},
-          h('td', {}, d.name, d.priority ? バッジ(`優先${d.priority}`, '強調') : null),
+          h('td', {}, d.name, d.priority ? バッジ(`優先${d.priority}`, '強調') : null, d.measure !== null && d.measure !== undefined ? バッジ('測定', '味方') : null),
           h('td', {}, h('strong', {}, d.value ?? '—')),
           h('td', {}, バッジ(d.level, レベルの色[d.level])),
           h('td', {}, d.coach ?? '—'), h('td', {}, d.self ?? '—'), h('td', {}, d.stats ?? '—')))))),
-      h('small', {}, `総合＝コーチ${スキル.weights['コーチ'] * 100}%・スタッツ${スキル.weights['スタッツ'] * 100}%・自己評価${スキル.weights['自己評価'] * 100}%（入力された分だけで計算）。${レベルの目安}`),
+      h('small', {}, `総合＝コーチ${スキル.weights['コーチ'] * 100}%・スタッツ${スキル.weights['スタッツ'] * 100}%・自己評価${スキル.weights['自己評価'] * 100}%（入力された分だけで計算）。${測定.skill}は体力測定の記録があれば、実測値から出したスコアで判定。${レベルの目安}`),
       差の警告.length ? h('p', { class: '注意書き' }, `⚠️ 自己評価とコーチ評価に大きな差があります：${差の警告.map((d) => `${d.name}（${d.gap > 0 ? '自己評価が高め' : '自己評価が低め'}）`).join('、')}。コーチと話してみよう`) : null),
+
+    体力測定カード(id, 測定, { 記録できる: 本人 || コーチ }),
 
     h('h2', { class: '節見出し' }, '🪜 次に取り組む練習'),
     ステップ.recommendations.length
@@ -151,7 +211,7 @@ export async function スキル画面(id) {
     h('section', { class: 'カード' },
       h('h2', {}, '📶 スキル別のステップ'),
       コーチ ? h('small', {}, 'ステップをタップすると、提示の上書き・完了・やり直しができます') : null,
-      ステップ.categories.map((c) => h('details', { class: 'ステップ階段' },
+      ステップ.categories.filter((c) => c.total > 0).map((c) => h('details', { class: 'ステップ階段' },
         h('summary', {},
           h('strong', {}, c.category_name), ' ',
           バッジ(c.diagnosis.level, レベルの色[c.diagnosis.level]),
@@ -182,14 +242,15 @@ export async function ステップ一覧表画面() {
   const データ = await api('GET', '/api/steps/overview');
   描画(
     見出し('ステップ進行一覧', null, '#/players'),
-    h('p', { class: '補足' }, '各マスは「現在のレベル・ステップ（完了数/全体）」。★は優先して伸ばすスキル、👉はコーチ指定。選手名をタップで詳細'),
+    h('p', { class: '補足' }, '各マスは「現在のレベル・ステップ（完了数/全体）」。★は優先して伸ばすスキル、👉はコーチ指定。ドリルのないスキル（基礎体力）はレベルとスコア。選手名をタップで詳細'),
     データ.players.length ? h('div', { class: '表の枠 カード' }, h('table', { class: '表 一覧表' },
       h('thead', {}, h('tr', {}, h('th', { class: '固定列' }, '選手'), データ.categories.map((c) => h('th', {}, c.name)), h('th', {}, '最終報告'))),
       h('tbody', {}, データ.players.map((p) => h('tr', {},
         h('td', { class: '固定列' }, h('a', { href: `#/skills/${p.player.id}` }, p.player.number ? `#${p.player.number} ` : '', p.player.name)),
         p.categories.map((c) => h('td', { class: `マス ${c.priority ? '優先' : ''}` },
-          c.current ? [h('small', {}, c.current.level), h('div', {}, `S${c.current.order}`, c.priority ? ' ★' : '', c.overridden ? ' 👉' : '')] : h('div', {}, '🏆'),
-          h('small', { class: '数' }, `${c.completed}/${c.total}`))),
+          c.total === 0 ? [h('small', {}, c.level), h('div', {}, c.value ?? '—')]
+            : c.current ? [h('small', {}, c.current.level), h('div', {}, `S${c.current.order}`, c.priority ? ' ★' : '', c.overridden ? ' 👉' : '')] : h('div', {}, '🏆'),
+          c.total ? h('small', { class: '数' }, `${c.completed}/${c.total}`) : null)),
         h('td', {}, p.last_report ? 日付表示(p.last_report) : '—')))))) : 空表示('選手がいません'));
 }
 

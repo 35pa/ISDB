@@ -249,6 +249,18 @@ CREATE TABLE IF NOT EXISTS skill_assessments (
 );
 CREATE INDEX IF NOT EXISTS idx_assess_player ON skill_assessments(player_id, category_id, source);
 
+CREATE TABLE IF NOT EXISTS body_measurements (
+  id INTEGER PRIMARY KEY,
+  team_id INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+  player_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  item TEXT NOT NULL,
+  value REAL NOT NULL,
+  measured_on TEXT NOT NULL,
+  recorder_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_measure_player ON body_measurements(player_id, item, measured_on);
+
 CREATE TABLE IF NOT EXISTS drill_steps (
   id INTEGER PRIMARY KEY,
   team_id INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
