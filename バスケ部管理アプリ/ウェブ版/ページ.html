@@ -1,0 +1,43 @@
+<title>バスケ部ノート</title>
+<meta name="theme-color" content="#ea580c">
+<meta name="apple-mobile-web-app-title" content="バスケ部ノート">
+<style>
+/*スタイル*/
+#起動画面 {
+  position: fixed; inset: 0; z-index: 50; display: grid; place-content: center; gap: 14px; padding: 24px 16px;
+  text-align: center; background: var(--背景, #fff7ed); color: var(--文字, #1f2937);
+}
+#起動画面 .ロゴ { font-size: 56px; line-height: 1; }
+#起動画面 h1 { margin: 0; font-size: 1.5rem; }
+#起動画面 p { margin: 0; color: var(--薄文字, #6b7280); max-width: 30em; }
+#起動画面 .回転 {
+  width: 36px; height: 36px; margin: 0 auto; border-radius: 50%;
+  border: 4px solid color-mix(in srgb, var(--主, #ea580c) 25%, transparent); border-top-color: var(--主, #ea580c);
+  animation: 起動回転 0.9s linear infinite;
+}
+#起動画面.失敗 .回転 { display: none; }
+#起動画面.失敗 #起動状況 { color: var(--悪, #dc2626); }
+@keyframes 起動回転 { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { #起動画面 .回転 { animation-duration: 3s; } }
+.カード.お試し { margin-top: 16px; text-align: left; }
+.カード.お試し h2 { margin-top: 0; }
+</style>
+
+<div id="起動画面" role="status">
+  <div class="ロゴ" aria-hidden="true">🏀</div>
+  <h1>バスケ部ノート</h1>
+  <div class="回転" aria-hidden="true"></div>
+  <p id="起動状況">読み込んでいます</p>
+</div>
+<main id="画面" tabindex="-1"></main>
+<nav id="下部メニュー" aria-label="メインメニュー" hidden></nav>
+<div id="通知" aria-live="polite"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/pyodide@/*Pyodideの版*//pyodide.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pyodide@/*Pyodideの版*//pyodide.asm.js"></script>
+<script>
+/*起動処理*/
+</script>
+<script>
+/*アプリ*/
+</script>

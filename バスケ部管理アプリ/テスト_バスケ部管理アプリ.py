@@ -1,0 +1,754 @@
+"""バスケ部管理アプリのテスト。
+
+実行: python -m unittest テスト_バスケ部管理アプリ -v   （バスケ部管理アプリ フォルダで）
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import tempfile
+import threading
+import unittest
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+import sqlite3
+
+import データベース
+import スキル診断
+import 体力測定
+import 初期データ
+import 集計
+import API_戦術
+import 戦術クイズ
+from API_戦術 import 図データを検証
+from サーバー import サーバーを作成
+
+
+# ---------- 純粋関数 ----------
+
+
+class スキル診断のテスト(unittest.TestCase):
+    def test_レベル判定(self):
+        self.assertEqual(スキル診断.レベル判定(None), "未診断")
+        境目 = {0: "基礎", 19: "基礎", 20: "初級", 39: "初級", 40: "中級", 59: "中級", 60: "上級", 79: "上級", 80: "プロ", 100: "プロ"}
+        for 値, レベル in 境目.items():
+            self.assertEqual(スキル診断.レベル判定(値), レベル, 値)
+
+    def test_レベルの目安は0から100をすき間なく覆う(self):
+        目安 = スキル診断.レベルの目安()
+        self.assertEqual([m["name"] for m in 目安], list(スキル診断.レベル一覧))
+        self.assertEqual((目安[0]["min"], 目安[-1]["max"]), (0, 100))
+        for 前, 次 in zip(目安, 目安[1:]):
+            self.assertEqual(前["max"] + 1, 次["min"])
+        for m in 目安:
+            self.assertEqual({スキル診断.レベル判定(m["min"]), スキル診断.レベル判定(m["max"])}, {m["name"]})
+
+    def test_総合値は入力された評価元だけで重み付き平均(self):
+        self.assertIsNone(スキル診断.総合値({}))
+        self.assertEqual(スキル診断.総合値({"コーチ": 60}), 60)
+        # コーチ0.5・自己0.2 → (60*0.5 + 90*0.2) / 0.7 = 68.57
+        self.assertEqual(スキル診断.総合値({"コーチ": 60, "自己評価": 90}), 69)
+        self.assertEqual(スキル診断.総合値({"コーチ": 50, "スタッツ": 80, "自己評価": 20}), 53)
+
+    def test_スタッツから能力値(self):
+        self.assertIsNone(スキル診断.スタッツから能力値("シュート", [{"fga": 20, "fgm": 10}]))  # 1試合では算出しない
+        良い = [{"fga": 10, "fgm": 6, "tpm": 1, "fta": 0, "ftm": 0}] * 3
+        悪い = [{"fga": 10, "fgm": 2, "tpm": 0, "fta": 0, "ftm": 0}] * 3
+        self.assertGreater(スキル診断.スタッツから能力値("シュート", 良い), スキル診断.スタッツから能力値("シュート", 悪い))
+        self.assertEqual(スキル診断.スタッツから能力値("リバウンド", [{"rebounds": 10}] * 2), 95)
+        self.assertIsNone(スキル診断.スタッツから能力値("基礎体力", [{"points": 10}] * 5))
+
+    def test_優先順位は総合値の低い順に3つ(self):
+        カテゴリ = [{"id": i, "name": f"S{i}"} for i in range(1, 6)]
+        評価 = {1: {"コーチ": 80}, 2: {"コーチ": 30}, 3: {"コーチ": 50}, 4: {"コーチ": 20}}
+        結果 = {d["category_id"]: d for d in スキル診断.スキル診断(カテゴリ, 評価, [])}
+        self.assertEqual([結果[i]["priority"] for i in (4, 2, 3, 1, 5)], [1, 2, 3, None, None])
+        self.assertEqual(結果[5]["level"], "未診断")
+
+    def test_自己評価との差の警告(self):
+        結果 = スキル診断.スキル診断([{"id": 1, "name": "パス"}], {1: {"コーチ": 30, "自己評価": 80}}, [])
+        self.assertTrue(結果[0]["gap_warning"])
+        self.assertEqual(結果[0]["gap"], 50)
+
+    def _ドリル(self):
+        return [
+            {"id": 3, "level": "中級", "step_no": 1, "next_step_id": 4},
+            {"id": 1, "level": "初級", "step_no": 1, "next_step_id": 2},
+            {"id": 4, "level": "上級", "step_no": 1, "next_step_id": None},
+            {"id": 2, "level": "初級", "step_no": 2, "next_step_id": 3},
+        ]
+
+    def test_ドリルは次ステップのつながり順(self):
+        self.assertEqual([d["id"] for d in スキル診断.ドリルを段階順に並べる(self._ドリル())], [1, 2, 3, 4])
+
+    def test_循環参照でも全ドリルを返す(self):
+        ドリル = [{"id": 1, "level": "初級", "step_no": 1, "next_step_id": 2}, {"id": 2, "level": "初級", "step_no": 2, "next_step_id": 1}]
+        self.assertEqual(sorted(d["id"] for d in スキル診断.ドリルを段階順に並べる(ドリル)), [1, 2])
+
+    def test_現在のステップ(self):
+        並び = スキル診断.ドリルを段階順に並べる(self._ドリル())
+        self.assertEqual(スキル診断.現在のステップ(並び, {}, "未診断")["id"], 1)
+        self.assertEqual(スキル診断.現在のステップ(並び, {1: "完了"}, "初級")["id"], 2)
+        # 中級と診断されたら初級は飛ばす
+        self.assertEqual(スキル診断.現在のステップ(並び, {}, "中級")["id"], 3)
+        # レベルをクリアしたら次のレベルへ
+        self.assertEqual(スキル診断.現在のステップ(並び, {1: "完了", 2: "完了"}, "初級")["id"], 3)
+        self.assertIsNone(スキル診断.現在のステップ(並び, {1: "完了", 2: "完了", 3: "完了", 4: "完了"}, "初級"))
+        # コーチの上書き指定が優先
+        self.assertEqual(スキル診断.現在のステップ(並び, {}, "中級", 上書きドリルID=1)["id"], 1)
+        self.assertEqual(スキル診断.現在のステップ(並び, {1: "完了"}, "中級", 上書きドリルID=1)["id"], 3)
+
+
+class 集計のテスト(unittest.TestCase):
+    def test_スタッツ集計と成功率(self):
+        行 = [
+            {"id": 1, "date": "2026-05-01", "points": 10, "fgm": 4, "fga": 10, "tpm": 1, "tpa": 3, "ftm": 1, "fta": 2, "zones": {"ゴール下": {"a": 4, "m": 3}}},
+            {"id": 2, "date": "2026-05-08", "points": 6, "fgm": 3, "fga": 5, "tpm": 0, "tpa": 1, "ftm": 0, "fta": 0, "zones": json.dumps({"ゴール下": {"a": 2, "m": 1}})},
+        ]
+        結果 = 集計.スタッツを集計(行)
+        self.assertEqual(結果["games"], 2)
+        self.assertEqual(結果["averages"]["points"], 8)
+        self.assertEqual(結果["fg_pct"], 46.7)
+        ゴール下 = next(z for z in 結果["shot_chart"] if z["zone"] == "ゴール下")
+        self.assertEqual((ゴール下["a"], ゴール下["m"], ゴール下["pct"]), (6, 4, 66.7))
+        self.assertEqual([t["date"] for t in 結果["trend"]], ["2026-05-01", "2026-05-08"])
+
+    def test_得点の検算(self):
+        self.assertEqual(集計.得点を検算({"fgm": 5, "tpm": 2, "ftm": 3}), 2 * 3 + 3 * 2 + 3)
+
+    def test_エリアの検証(self):
+        with self.assertRaises(ValueError):
+            集計.エリア内訳を検証({"どこか": {"a": 1, "m": 0}})
+        with self.assertRaises(ValueError):
+            集計.エリア内訳を検証({"ペイント": {"a": 1, "m": 2}})
+
+    def test_成長記録カレンダー(self):
+        結果 = 集計.成長記録カレンダー(
+            2026, 2,
+            [{"date": "2026-02-02", "title": "練習", "kind": "練習", "status": "出席"}, {"date": "2026-02-03", "title": "練習", "kind": "練習", "status": "欠席"}],
+            [{"date": "2026-02-02", "title": "ドリル", "cleared": 1}],
+            [{"id": 1, "date": "2026-02-03", "minutes": 30, "content": "自主練"}],
+        )
+        self.assertEqual(len(結果["days"]), 28)
+        self.assertEqual(結果["days"][1]["level"], 2)
+        self.assertEqual(結果["days"][2]["level"], 1)  # 欠席は数えない、自主練のみ
+        self.assertEqual(結果["active_days"], 2)
+        self.assertEqual(結果["longest_streak"], 2)
+        self.assertEqual(結果["self_practice_minutes"], 30)
+
+
+class 体力測定のテスト(unittest.TestCase):
+    def test_実測値をスコアに換算(self):
+        self.assertEqual(体力測定.項目スコア("jump_reach", 285), 50)
+        self.assertEqual(体力測定.項目スコア("jump_reach", 400), 100)
+        self.assertEqual(体力測定.項目スコア("jump_reach", 200), 0)
+        self.assertEqual(体力測定.項目スコア("pro_agility", 5.2), 50)  # タイムは小さいほど高い
+        self.assertEqual(体力測定.項目スコア("pro_agility", 4.0), 100)
+        self.assertIsNone(体力測定.項目スコア("height", 180))  # 身長は記録のみ
+        self.assertIsNone(体力測定.項目スコア("weight", None))
+
+    def test_垂直跳びは同じ日の到達点と指高から計算(self):
+        記録 = [
+            {"id": 1, "item": "standing_reach", "value": 225, "measured_on": "2026-04-01"},
+            {"id": 2, "item": "jump_reach", "value": 280, "measured_on": "2026-04-01"},
+            {"id": 3, "item": "jump_reach", "value": 290, "measured_on": "2026-05-01"},  # 指高を測っていない日
+        ]
+        最新 = 体力測定.最新の測定値(記録)
+        self.assertEqual(最新["jump_reach"]["value"], 290)
+        self.assertEqual(最新["vertical_jump"], {"value": 55, "measured_on": "2026-04-01"})
+
+    def test_基礎体力スコアは測った項目の平均(self):
+        記録 = [
+            {"item": "height", "value": 180, "measured_on": "2026-04-01"},
+            {"item": "jump_reach", "value": 285, "measured_on": "2026-04-01"},  # 50点
+            {"item": "weight", "value": 70, "measured_on": "2026-04-01"},  # 50点
+            {"item": "shuttle_17", "value": 56, "measured_on": "2026-04-01"},  # 80点
+        ]
+        結果 = 体力測定.基礎体力の評価(記録)
+        self.assertEqual(結果["score"], 60)
+        self.assertEqual(結果["scored_count"], 3)
+        self.assertIsNone(体力測定.基礎体力の評価([])["score"])
+
+    def test_測定スコアがあれば基礎体力の総合値になる(self):
+        カテゴリ = [{"id": 1, "name": "基礎体力"}, {"id": 2, "name": "パス"}]
+        評価 = {1: {"コーチ": 90, "自己評価": 90}, 2: {"コーチ": 40}}
+        結果 = {d["name"]: d for d in スキル診断.スキル診断(カテゴリ, 評価, [], {"基礎体力": 35})}
+        self.assertEqual(結果["基礎体力"]["value"], 35)
+        self.assertEqual(結果["基礎体力"]["level"], "初級")
+        self.assertEqual(結果["基礎体力"]["measure"], 35)
+        self.assertEqual(結果["パス"]["value"], 40)
+        # 測定がなければ今までどおり評価の加重平均
+        self.assertEqual({d["name"]: d for d in スキル診断.スキル診断(カテゴリ, 評価, [], {"基礎体力": None})}["基礎体力"]["value"], 90)
+
+
+class 初期データのテスト(unittest.TestCase):
+    def test_スキルは6項目を基礎からプロまで網羅(self):
+        self.assertEqual(初期データ.スキルカテゴリ, ("ドリブル", "パス", "シュート", "ディフェンス", "基礎体力", "リバウンド"))
+        # 基礎体力はドリルではなく体力測定の実測値で判定する
+        self.assertFalse([d for d in 初期データ.ステップドリル if d[0] == 体力測定.測定で決めるスキル])
+        for カテゴリ in 初期データ.スキルカテゴリ:
+            if カテゴリ == 体力測定.測定で決めるスキル:
+                continue
+            ドリル = [d for d in 初期データ.ステップドリル if d[0] == カテゴリ]
+            for レベル in スキル診断.レベル一覧:
+                self.assertGreaterEqual(sum(1 for d in ドリル if d[1] == レベル), 3, f"{カテゴリ}・{レベル}")
+            タイトル = [d[2] for d in ドリル]
+            self.assertEqual(len(タイトル), len(set(タイトル)), カテゴリ)
+        for カテゴリ, レベル, タイトル, 内容, 分, 条件 in 初期データ.ステップドリル:
+            self.assertIn(カテゴリ, 初期データ.スキルカテゴリ)
+            self.assertIn(レベル, スキル診断.レベル一覧)
+            self.assertTrue(0 < len(タイトル) <= 60 and 内容 and 条件 and len(条件) <= 200, タイトル)
+            self.assertTrue(0 <= 分 <= 300)
+        # 標準ドリルは1人で実施・計測できる（相手・パートナー・コーチの判定がいらない）
+        for カテゴリ, レベル, タイトル, 内容, 分, 条件 in 初期データ.ステップドリル:
+            for 語 in ("コーチ", "ペア", "パッサー", "相手", "味方", "対1", "対2", "対3", "対4", "対5"):
+                self.assertNotIn(語, タイトル + 内容 + 条件, タイトル)
+            self.assertTrue(any(c.isdigit() for c in 条件), f"クリア条件に数値がない：{タイトル}")
+        # 同じスキル内はレベル順に並べて書く（投入時の段階順と一致させる）
+        for カテゴリ in 初期データ.スキルカテゴリ:
+            順 = [スキル診断.レベル一覧.index(d[1]) for d in 初期データ.ステップドリル if d[0] == カテゴリ]
+            self.assertEqual(順, sorted(順), カテゴリ)
+
+    def test_作戦テンプレートは図データとして正しい(self):
+        テンプレート = 初期データ.戦術テンプレート()
+        self.assertGreaterEqual(len(テンプレート), 20)
+        タイトル = [t[1] for t in テンプレート]
+        self.assertEqual(len(タイトル), len(set(タイトル)))
+        分類 = {タイトル_.split("】")[0].lstrip("【") for タイトル_ in タイトル}
+        self.assertTrue({"フォーメーション", "セットプレー", "リスタート", "速攻", "ゾーン", "マンツー", "プレス"} <= 分類, 分類)
+        for 種別, タイトル_, 説明, 図, クイズ一覧 in テンプレート:
+            with self.subTest(タイトル_):
+                self.assertIn(種別, ("オフェンス", "ディフェンス"))
+                self.assertTrue(タイトル_.startswith("【") and len(タイトル_) <= 60 and 説明)
+                # 検証を通しても何も削られない（座標がコート内・人数・線の数・ボール保持者が正しい）
+                self.assertEqual(図データを検証(図), json.loads(json.dumps(図)) | {"frames": [
+                    {**コマ, "players": [{**p, "x": float(p["x"]), "y": float(p["y"])} for p in コマ["players"]],
+                     "lines": [{**l, "points": [[float(x), float(y)] for x, y in l["points"]]} for l in コマ["lines"]]}
+                    for コマ in 図["frames"]]})
+                for コマ in 図["frames"]:
+                    self.assertTrue(コマ["note"])
+                    self.assertIn(コマ["ball"], {p["id"] for p in コマ["players"]})
+                self.assertTrue(クイズ一覧)
+                self.assertEqual(len({戦術クイズ.問題の鍵(q) for q in クイズ一覧}), len(クイズ一覧))  # 同じ問題が2つない
+                for クイズ in クイズ一覧:
+                    # API の入力チェックをそのまま通る
+                    値 = API_戦術._クイズ入力({**クイズ, "target": クイズ["target"]}, 図)
+                    self.assertEqual((値["quiz_type"], 値["position"], 値["frame"]), (クイズ["quiz_type"], クイズ["position"], クイズ["frame"]))
+                    self.assertTrue(クイズ["explanation"], クイズ["question"])
+                    if クイズ["quiz_type"] not in 戦術クイズ.タップの種類:
+                        self.assertTrue(0 <= クイズ["answer_index"] < len(クイズ["choices"]))
+                        continue
+                    # タップ問題の正解の位置は図と一致する（移動先＝次のコマの位置、位置＝そのコマの位置）
+                    対象 = クイズ["position"].split(",")[0]
+                    コマ番号 = クイズ["frame"] + (1 if クイズ["quiz_type"] == "移動先" else 0)
+                    選手 = next(p for p in 図["frames"][コマ番号]["players"] if p["id"] == 対象)
+                    self.assertTrue(戦術クイズ.タップ判定(クイズ["target"], 選手["x"], 選手["y"]), クイズ["question"])
+                # フォーメーション（形を覚えるもの）は、5つのポジションすべてに自分向けの問題がある
+                if re.match(r"^【(フォーメーション|ゾーン|変則)】", タイトル_):
+                    チーム = "O" if 種別 == "オフェンス" else "X"
+                    位置 = {p for q in クイズ一覧 for p in q["position"].split(",") if p}
+                    self.assertTrue({f"{チーム}{i}" for i in range(1, 6)} <= 位置, 位置)
+
+    def test_古いデータベースを新しい形に更新(self):
+        with tempfile.TemporaryDirectory() as 一時:
+            パス = Path(一時) / "旧.sqlite3"
+            旧スキーマ = データベース.スキーマ.replace("CHECK (level IN ('基礎', '初級', '中級', '上級', 'プロ'))", "CHECK (level IN ('初級', '中級', '上級'))")
+            # 理解度クイズの種類・ポジション・タップの列がなかった頃の表
+            for 列 in ("  quiz_type TEXT NOT NULL DEFAULT '選択',\n", "  position TEXT NOT NULL DEFAULT '',\n  frame INTEGER,\n", "  tap_x REAL,\n  tap_y REAL,\n"):
+                self.assertIn(列, 旧スキーマ)
+                旧スキーマ = 旧スキーマ.replace(列, "", 1)
+            旧スキーマ = 旧スキーマ.replace("  explanation TEXT NOT NULL DEFAULT '',\n  target TEXT NOT NULL DEFAULT ''\n", "  explanation TEXT NOT NULL DEFAULT ''\n", 1)
+            旧 = sqlite3.connect(パス)
+            旧.executescript(旧スキーマ)
+            旧.execute("INSERT INTO teams (id, name, code, created_at) VALUES (1, 'T', 'ABC', 'x')")
+            旧.execute("INSERT INTO users (id, team_id, login_id, name, role, password_hash, created_at) VALUES (1, 1, 'p', 'P', 'player', 'h', 'x')")
+            旧.execute("INSERT INTO skill_categories (id, team_id, name, sort) VALUES (1, 1, 'フィジカル', 0)")
+            旧.execute("INSERT INTO drill_steps (id, team_id, category_id, level, title) VALUES (1, 1, 1, '初級', 'A'), (2, 1, 1, '上級', 'B')")
+            旧.execute("UPDATE drill_steps SET next_step_id = 2 WHERE id = 1")
+            旧.execute("INSERT INTO player_step_progress (player_id, drill_id, team_id, status, updated_at) VALUES (1, 2, 1, '完了', 'x')")
+            旧.execute("INSERT INTO tactics (id, team_id, kind, title, data, created_at, updated_at) VALUES (1, 1, 'オフェンス', 'T', '{}', 'x', 'x')")
+            旧.execute("INSERT INTO tactic_quizzes (id, tactic_id, question, choices, answer_index) VALUES (1, 1, 'Q', '[\"a\",\"b\"]', 1)")
+            旧.execute("INSERT INTO tactic_answers (quiz_id, user_id, choice, correct, answered_at) VALUES (1, 1, 1, 1, 'x')")
+            旧.commit()
+            旧.close()
+
+            新 = データベース.接続(パス)
+            データベース.初期化(新)
+            データベース.初期化(新)  # 2回目は何もしない
+            self.assertEqual(新.execute("SELECT name FROM skill_categories").fetchone()[0], "基礎体力")
+            self.assertEqual([tuple(r) for r in 新.execute("SELECT id, level, next_step_id FROM drill_steps ORDER BY id")], [(1, "初級", 2), (2, "上級", None)])
+            新.execute("INSERT INTO drill_steps (team_id, category_id, level, title) VALUES (1, 1, 'プロ', 'C')")
+            self.assertEqual(新.execute("PRAGMA foreign_key_check").fetchall(), [])
+            # ドリルを消すと進捗も消える（外部キーが生きている）
+            新.execute("DELETE FROM drill_steps WHERE id = 2")
+            self.assertEqual(新.execute("SELECT COUNT(*) FROM player_step_progress").fetchone()[0], 0)
+            self.assertIsNone(新.execute("SELECT next_step_id FROM drill_steps WHERE id = 1").fetchone()[0])
+            # 前からあるクイズは「選択」問題・全員向けになり、回答も残る
+            self.assertEqual(tuple(新.execute("SELECT quiz_type, position, frame, target FROM tactic_quizzes").fetchone()), ("選択", "", None, ""))
+            self.assertEqual(tuple(新.execute("SELECT choice, correct, tap_x FROM tactic_answers").fetchone()), (1, 1, None))
+            新.close()
+
+
+# ---------- API（実際にサーバーを起動して確認） ----------
+
+
+class APIのテスト(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.一時 = tempfile.TemporaryDirectory()
+        cls.サーバー, _ = サーバーを作成(Path(cls.一時.name) / "テスト.sqlite3", "127.0.0.1", 0, 静か=True)
+        cls.基本 = f"http://127.0.0.1:{cls.サーバー.server_address[1]}"
+        threading.Thread(target=cls.サーバー.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.サーバー.shutdown()
+        cls.サーバー.server_close()
+        cls.一時.cleanup()
+
+    def 呼ぶ(self, メソッド, パス, 本文=None, トークン=None, 期待=200):
+        データ = json.dumps(本文).encode() if 本文 is not None else None
+        要求 = urllib.request.Request(self.基本 + urllib.parse.quote(パス, safe="/?=&%"), data=データ, method=メソッド)
+        要求.add_header("Content-Type", "application/json")
+        if トークン:
+            要求.add_header("Authorization", f"Bearer {トークン}")
+        try:
+            with urllib.request.urlopen(要求) as 応答:
+                状態, 結果 = 応答.status, json.loads(応答.read() or b"null")
+        except urllib.error.HTTPError as エラー:
+            状態, 結果 = エラー.code, json.loads(エラー.read() or b"null")
+        self.assertEqual(状態, 期待, f"{メソッド} {パス} → {状態} {結果}")
+        return 結果
+
+    def チームを作る(self, 名前="テスト高校"):
+        結果 = self.呼ぶ("POST", "/api/teams", {"team_name": 名前, "name": "監督", "login_id": "coach", "password": "password1"})
+        return 結果["token"], 結果["team"]["code"]
+
+    def 選手を追加(self, コーチ, コード, ログインID="player1", 名前="選手A"):
+        結果 = self.呼ぶ("POST", "/api/members", {"name": 名前, "login_id": ログインID, "role": "player", "number": "4"}, コーチ)
+        ログイン = self.呼ぶ("POST", "/api/login", {"team_code": コード, "login_id": ログインID, "password": 結果["initial_password"]})
+        return 結果["member"]["id"], ログイン["token"]
+
+    def test_静的ファイルとセキュリティヘッダー(self):
+        with urllib.request.urlopen(self.基本 + "/") as 応答:
+            self.assertIn("バスケ部ノート", 応答.read().decode())
+            self.assertIn("default-src 'self'", 応答.headers["Content-Security-Policy"])
+        with self.assertRaises(urllib.error.HTTPError) as 例外:
+            urllib.request.urlopen(self.基本 + "/..%2F..%2F" + urllib.parse.quote("サーバー.py"))
+        self.assertEqual(例外.exception.code, 404)
+
+    def test_ログインとパスワード(self):
+        コーチ, コード = self.チームを作る()
+        self.呼ぶ("GET", "/api/me", 期待=401)
+        self.呼ぶ("POST", "/api/login", {"team_code": コード, "login_id": "coach", "password": "違う"}, 期待=401)
+        結果 = self.呼ぶ("POST", "/api/login", {"team_code": コード.lower(), "login_id": "COACH", "password": "password1"})
+        self.assertEqual(結果["user"]["role"], "coach")
+        新 = self.呼ぶ("PUT", "/api/me/password", {"current": "password1", "new": "newpass99"}, 結果["token"])
+        self.呼ぶ("GET", "/api/me", トークン=結果["token"], 期待=401)  # 古いセッションは無効
+        self.呼ぶ("GET", "/api/me", トークン=新["token"])
+        self.呼ぶ("POST", "/api/logout", {}, 新["token"])
+        self.呼ぶ("GET", "/api/me", トークン=新["token"], 期待=401)
+        self.assertEqual(コーチ != 新["token"], True)
+
+    def test_チームの初期データ(self):
+        コーチ, _ = self.チームを作る()
+        self.assertEqual(len(self.呼ぶ("GET", "/api/skill-categories", トークン=コーチ)), 6)
+        self.assertGreater(len(self.呼ぶ("GET", "/api/drills", トークン=コーチ)), 30)
+        self.assertGreater(len(self.呼ぶ("GET", "/api/menus", トークン=コーチ)), 5)
+        self.assertTrue(any(t["is_template"] for t in self.呼ぶ("GET", "/api/tactics", トークン=コーチ)))
+
+    def test_他チームのデータは見えない(self):
+        コーチA, コードA = self.チームを作る("A高校")
+        コーチB, _ = self.チームを作る("B高校")
+        選手A, _ = self.選手を追加(コーチA, コードA)
+        予定 = self.呼ぶ("POST", "/api/events", {"kind": "練習", "date": "2026-06-01"}, コーチA)
+        メニュー = self.呼ぶ("GET", "/api/menus", トークン=コーチA)[0]
+        戦術 = self.呼ぶ("GET", "/api/tactics", トークン=コーチA)[0]
+        self.呼ぶ("GET", f"/api/events/{予定['id']}", トークン=コーチB, 期待=404)
+        self.呼ぶ("PUT", f"/api/menus/{メニュー['id']}", {"name": "乗っ取り"}, コーチB, 期待=404)
+        self.呼ぶ("GET", f"/api/tactics/{戦術['id']}", トークン=コーチB, 期待=404)
+        self.呼ぶ("GET", f"/api/players/{選手A}/karte", トークン=コーチB, 期待=404)
+        self.呼ぶ("PUT", f"/api/members/{選手A}", {"name": "変更"}, コーチB, 期待=404)
+        # B の予定に A のメニューを入れることもできない
+        self.呼ぶ("POST", "/api/events", {"date": "2026-06-01", "menu_ids": [メニュー["id"]]}, コーチB, 期待=404)
+        self.assertEqual(len(self.呼ぶ("GET", "/api/members", トークン=コーチB)), 1)
+
+    def test_選手の権限(self):
+        コーチ, コード = self.チームを作る()
+        選手1, 選手1トークン = self.選手を追加(コーチ, コード, "player1", "選手A")
+        選手2, _ = self.選手を追加(コーチ, コード, "player2", "選手B")
+        # 個人情報の編集はコーチのみ
+        self.呼ぶ("PUT", f"/api/members/{選手1}", {"name": "自分で変更"}, 選手1トークン, 期待=403)
+        self.呼ぶ("POST", "/api/members", {"name": "x", "login_id": "xyz"}, 選手1トークン, 期待=403)
+        # 他の選手のカルテは見られない
+        self.呼ぶ("GET", f"/api/players/{選手1}/karte", トークン=選手1トークン)
+        self.呼ぶ("GET", f"/api/players/{選手2}/karte", トークン=選手1トークン, 期待=403)
+        self.呼ぶ("GET", f"/api/players/{選手2}/skills", トークン=選手1トークン, 期待=403)
+        # お知らせ配信・予定作成・戦術作成はコーチのみ
+        self.呼ぶ("POST", "/api/posts", {"kind": "お知らせ", "title": "x"}, 選手1トークン, 期待=403)
+        self.呼ぶ("POST", "/api/posts", {"kind": "掲示板", "title": "x"}, 選手1トークン)
+        self.呼ぶ("POST", "/api/events", {"date": "2026-06-01"}, 選手1トークン, 期待=403)
+        self.呼ぶ("POST", "/api/stats/game", {"date": "2026-06-01", "rows": []}, 選手1トークン, 期待=403)
+        # 他の選手の出欠は代理入力できない
+        予定 = self.呼ぶ("POST", "/api/events", {"date": "2099-06-01"}, コーチ)
+        self.呼ぶ("PUT", f"/api/events/{予定['id']}/attendance", {"status": "出席", "user_id": 選手2}, 選手1トークン, 期待=403)
+        # 下書きの予定は選手に見えない
+        下書き = self.呼ぶ("POST", "/api/events", {"date": "2099-06-02", "published": False}, コーチ)
+        self.呼ぶ("GET", f"/api/events/{下書き['id']}", トークン=選手1トークン, 期待=404)
+        self.assertNotIn(下書き["id"], [e["id"] for e in self.呼ぶ("GET", "/api/events", トークン=選手1トークン)])
+
+    def test_出欠と既読(self):
+        コーチ, コード = self.チームを作る()
+        選手, 選手トークン = self.選手を追加(コーチ, コード)
+        予定 = self.呼ぶ("POST", "/api/events", {"date": "2099-06-01", "menu_ids": [m["id"] for m in self.呼ぶ("GET", "/api/menus", トークン=コーチ)[:2]]}, コーチ)
+        詳細 = self.呼ぶ("GET", f"/api/events/{予定['id']}", トークン=コーチ)
+        self.assertEqual(詳細["summary"]["既読"], 1)
+        self.assertEqual(len(詳細["menus"]), 2)
+        self.呼ぶ("GET", f"/api/events/{予定['id']}", トークン=選手トークン)
+        self.呼ぶ("PUT", f"/api/events/{予定['id']}/attendance", {"status": "欠席", "comment": "通院"}, 選手トークン)
+        self.呼ぶ("PUT", f"/api/events/{予定['id']}/attendance", {"status": "寝坊"}, 選手トークン, 期待=400)
+        詳細 = self.呼ぶ("GET", f"/api/events/{予定['id']}", トークン=コーチ)
+        self.assertEqual((詳細["summary"]["既読"], 詳細["summary"]["欠席"], 詳細["summary"]["未回答"]), (2, 1, 1))
+        # コーチの代理入力
+        self.呼ぶ("PUT", f"/api/events/{予定['id']}/attendance", {"status": "出席", "user_id": 選手}, コーチ)
+        self.assertEqual(self.呼ぶ("GET", f"/api/events/{予定['id']}", トークン=選手トークン)["my_status"], "出席")
+        # 練習履歴の検索（メニュー名で）
+        名前 = 詳細["menus"][0]["name"]
+        self.assertEqual(len(self.呼ぶ("GET", f"/api/events?q={urllib.parse.quote(名前)}", トークン=コーチ)), 1)
+        # 複製
+        複製 = self.呼ぶ("POST", f"/api/events/{予定['id']}/copy", {"date": "2099-06-08"}, コーチ)
+        self.assertEqual(len(self.呼ぶ("GET", f"/api/events/{複製['id']}", トークン=コーチ)["menus"]), 2)
+
+    def test_お知らせの既読(self):
+        コーチ, コード = self.チームを作る()
+        _, 選手トークン = self.選手を追加(コーチ, コード)
+        投稿 = self.呼ぶ("POST", "/api/posts", {"kind": "お知らせ", "title": "集合時間", "body": "8時"}, コーチ)
+        self.assertEqual(len(self.呼ぶ("GET", "/api/home", トークン=選手トークン)["unread_notices"]), 1)
+        選手から = self.呼ぶ("GET", f"/api/posts/{投稿['id']}", トークン=選手トークン)
+        self.assertNotIn("reads", 選手から)  # 誰が読んだかはコーチのみ
+        self.assertEqual(len(self.呼ぶ("GET", "/api/home", トークン=選手トークン)["unread_notices"]), 0)
+        コーチから = self.呼ぶ("GET", f"/api/posts/{投稿['id']}", トークン=コーチ)
+        self.assertEqual(コーチから["read_count"], 2)
+        self.assertTrue(all(r["read_at"] for r in コーチから["reads"]))
+
+    def test_戦術図とクイズ(self):
+        コーチ, コード = self.チームを作る()
+        _, 選手トークン = self.選手を追加(コーチ, コード)
+        図 = {"frames": [{"players": [{"id": "O1", "team": "O", "label": "1", "x": 250, "y": 300}], "ball": "O1", "lines": [{"type": "pass", "points": [[250, 300], [100, 200]]}], "note": "パス"}]}
+        self.呼ぶ("POST", "/api/tactics", {"title": "x", "data": {"frames": [{"players": [{"id": "O1", "team": "O", "x": 999, "y": 0}]}]}}, コーチ, 期待=400)
+        戦術 = self.呼ぶ("POST", "/api/tactics", {"title": "速攻", "kind": "オフェンス", "data": 図}, コーチ)
+        クイズ = self.呼ぶ("POST", f"/api/tactics/{戦術['id']}/quizzes", {"question": "誰にパス？", "choices": ["2番", "3番"], "answer_index": 1, "explanation": "3番が空く"}, コーチ)
+        選手から = self.呼ぶ("GET", f"/api/tactics/{戦術['id']}", トークン=選手トークン)
+        self.assertIsNone(選手から["quizzes"][0]["answer_index"])  # 回答前は正解を隠す
+        self.assertFalse(self.呼ぶ("POST", f"/api/quizzes/{クイズ['id']}/answer", {"choice": 0}, 選手トークン)["correct"])
+        self.assertTrue(self.呼ぶ("POST", f"/api/quizzes/{クイズ['id']}/answer", {"choice": 1}, 選手トークン)["correct"])
+        self.呼ぶ("PUT", f"/api/tactics/{戦術['id']}/check", {"understood": 2, "comment": "分かった"}, 選手トークン)
+        コーチから = self.呼ぶ("GET", f"/api/tactics/{戦術['id']}", トークン=コーチ)
+        self.assertEqual((コーチから["checks"][0]["understood"], コーチから["checks"][0]["correct"]), (2, 1))
+        # 非公開の戦術は選手に見えない
+        複製 = self.呼ぶ("POST", f"/api/tactics/{戦術['id']}/copy", {}, コーチ)
+        self.呼ぶ("GET", f"/api/tactics/{複製['id']}", トークン=選手トークン, 期待=404)
+        self.assertEqual(len(self.呼ぶ("GET", f"/api/tactics/{複製['id']}", トークン=コーチ)["quizzes"]), 1)
+
+    def test_タップ問題とポジション別の問題(self):
+        コーチ, コード = self.チームを作る()
+        _, 選手トークン = self.選手を追加(コーチ, コード)
+        図 = {"frames": [
+            {"players": [{"id": "O1", "team": "O", "label": "1", "x": 250, "y": 320}, {"id": "O5", "team": "O", "label": "5", "x": 330, "y": 195}],
+             "ball": "O1", "lines": [{"type": "move", "points": [[330, 195], [260, 90]]}], "note": "5番がダイブ"},
+            {"players": [{"id": "O1", "team": "O", "label": "1", "x": 250, "y": 320}, {"id": "O5", "team": "O", "label": "5", "x": 260, "y": 90}],
+             "ball": "O1", "lines": [], "note": "パス"},
+        ]}
+        戦術 = self.呼ぶ("POST", "/api/tactics", {"title": "ダイブ", "kind": "オフェンス", "data": 図}, コーチ)
+        パス = f"/api/tactics/{戦術['id']}/quizzes"
+        # 入力チェック：タップ問題はコマ・対象の選手・正解の位置が必要。ポジションは図にいる選手だけ
+        self.呼ぶ("POST", パス, {"quiz_type": "移動先", "question": "5番は？", "position": "O5", "target": {"x": 260, "y": 90}}, コーチ, 期待=400)
+        self.呼ぶ("POST", パス, {"quiz_type": "移動先", "question": "5番は？", "frame": 0, "target": {"x": 260, "y": 90}}, コーチ, 期待=400)
+        self.呼ぶ("POST", パス, {"quiz_type": "移動先", "question": "5番は？", "frame": 0, "position": "O5"}, コーチ, 期待=400)
+        self.呼ぶ("POST", パス, {"quiz_type": "移動先", "question": "5番は？", "frame": 5, "position": "O5", "target": {"x": 1, "y": 1}}, コーチ, 期待=400)
+        self.呼ぶ("POST", パス, {"question": "3番は？", "choices": ["a", "b"], "answer_index": 0, "position": "O3"}, コーチ, 期待=400)
+        self.呼ぶ("POST", パス, {"quiz_type": "次の動き", "question": "次は？", "choices": ["a", "b"], "answer_index": 0}, コーチ, 期待=400)
+        タップ = self.呼ぶ("POST", パス, {"quiz_type": "移動先", "question": "5番はどこへ？", "frame": 0, "position": "O5",
+                                         "target": {"x": 260, "y": 90, "r": 40}, "explanation": "ゴールへダイブ"}, コーチ)
+        次 = self.呼ぶ("POST", パス, {"quiz_type": "次の動き", "question": "5番の次の動きは？", "frame": 0, "position": ["O5"],
+                                      "choices": ["ダイブ", "止まる"], "answer_index": 0}, コーチ)
+        # 図から移動先タップ問題を自動作成：同じコマ・同じ選手の問題は作らない
+        self.assertEqual(self.呼ぶ("POST", f"{パス}/auto", {}, コーチ)["added"], 0)
+        self.呼ぶ("DELETE", f"/api/quizzes/{タップ['id']}", トークン=コーチ)
+        self.assertEqual(self.呼ぶ("POST", f"{パス}/auto", {}, コーチ)["added"], 1)
+        self.呼ぶ("POST", f"{パス}/auto", {}, 選手トークン, 期待=403)
+        タップ = next(q for q in self.呼ぶ("GET", f"/api/tactics/{戦術['id']}", トークン=コーチ)["quizzes"] if q["quiz_type"] == "移動先")
+        self.assertEqual((タップ["position"], タップ["frame"], タップ["target"]["x"], タップ["target"]["y"]), ("O5", 0, 260, 90))
+        # 選手には答える前の正解の位置を見せない
+        選手から = {q["id"]: q for q in self.呼ぶ("GET", f"/api/tactics/{戦術['id']}", トークン=選手トークン)["quizzes"]}
+        self.assertIsNone(選手から[タップ["id"]]["target"])
+        self.assertEqual(選手から[次["id"]]["position"], "O5")
+        # タップの採点：正解の円の中なら正解
+        self.呼ぶ("POST", f"/api/quizzes/{タップ['id']}/answer", {"x": 999, "y": 90}, 選手トークン, 期待=400)
+        結果 = self.呼ぶ("POST", f"/api/quizzes/{タップ['id']}/answer", {"x": 400, "y": 300}, 選手トークン)
+        self.assertFalse(結果["correct"])
+        self.assertEqual(結果["target"]["x"], 260)
+        self.assertTrue(self.呼ぶ("POST", f"/api/quizzes/{タップ['id']}/answer", {"x": 280, "y": 120}, 選手トークン)["correct"])
+        選手から = {q["id"]: q for q in self.呼ぶ("GET", f"/api/tactics/{戦術['id']}", トークン=選手トークン)["quizzes"]}
+        self.assertEqual((選手から[タップ["id"]]["my_tap"], 選手から[タップ["id"]]["my_correct"]), ({"x": 280, "y": 120}, True))
+        self.assertEqual(選手から[タップ["id"]]["target"]["r"], 50)
+        # 正解の位置を直すと採点し直す
+        self.呼ぶ("PUT", f"/api/quizzes/{タップ['id']}", {"quiz_type": "移動先", "question": "5番は？", "frame": 0, "position": "O5",
+                                                      "target": {"x": 100, "y": 100, "r": 30}}, コーチ)
+        self.assertEqual(self.呼ぶ("GET", f"/api/tactics/{戦術['id']}", トークン=コーチ)["checks"][0]["correct"], 0)
+        # 選択問題に変えても、タップの回答は正解にならない
+        self.呼ぶ("PUT", f"/api/quizzes/{タップ['id']}", {"question": "5番は？", "choices": ["a", "b"], "answer_index": 0}, コーチ)
+        self.assertEqual(self.呼ぶ("GET", f"/api/tactics/{戦術['id']}", トークン=コーチ)["checks"][0]["correct"], 0)
+        # 複製しても種類・ポジション・コマ・正解の位置が残る
+        複製 = self.呼ぶ("POST", f"/api/tactics/{戦術['id']}/copy", {}, コーチ)
+        self.assertEqual(sorted((q["quiz_type"], q["position"]) for q in self.呼ぶ("GET", f"/api/tactics/{複製['id']}", トークン=コーチ)["quizzes"]),
+                         [("次の動き", "O5"), ("選択", "")])
+
+    def test_実技チェック(self):
+        コーチ, コード = self.チームを作る()
+        選手A, トークンA = self.選手を追加(コーチ, コード)
+        選手B, トークンB = self.選手を追加(コーチ, コード, "player2", "選手B")
+        _, トークンC = self.選手を追加(コーチ, コード, "player3", "選手C")
+        戦術 = next(t for t in self.呼ぶ("GET", "/api/tactics", トークン=コーチ) if "5アウト" in t["title"])
+        コマ数 = len(戦術["data"]["frames"])
+        パス = f"/api/tactics/{戦術['id']}/practice"
+        本文 = {"checked_on": "2026-09-01", "rating": 1, "frames_ok": [True, False], "note": "3番の埋めが遅い",
+                "players": [{"player_id": 選手A, "position": "O1", "ok": True}, {"player_id": 選手B, "position": "O3", "ok": False}]}
+        self.呼ぶ("POST", パス, 本文, トークンA, 期待=403)
+        self.呼ぶ("POST", パス, {**本文, "players": []}, コーチ, 期待=400)
+        self.呼ぶ("POST", パス, {**本文, "rating": 3}, コーチ, 期待=400)
+        self.呼ぶ("POST", パス, {**本文, "players": [本文["players"][0]] * 2}, コーチ, 期待=400)
+        self.呼ぶ("POST", パス, {**本文, "frames_ok": [True] * (コマ数 + 1)}, コーチ, 期待=400)
+        記録 = self.呼ぶ("POST", パス, 本文, コーチ)
+        self.呼ぶ("POST", パス, {**本文, "checked_on": "2026-09-08", "rating": 2, "frames_ok": [], "players": [{"player_id": 選手A, "position": "O1"}]}, コーチ)
+        詳細 = self.呼ぶ("GET", f"/api/tactics/{戦術['id']}", トークン=コーチ)
+        self.assertEqual([p["checked_on"] for p in 詳細["practices"]], ["2026-09-08", "2026-09-01"])
+        self.assertEqual(詳細["practices"][1]["frames_ok"], [True, False] + [True] * (コマ数 - 2))  # 足りない分は「できた」
+        self.assertEqual(len(詳細["practices"][1]["players"]), 2)
+        チェック = {c["name"]: c for c in 詳細["checks"]}
+        self.assertEqual((チェック["選手A"]["practice_rating"], チェック["選手A"]["practice_ok"], チェック["選手A"]["practice_on"]), (2, True, "2026-09-08"))
+        self.assertEqual((チェック["選手B"]["practice_rating"], チェック["選手B"]["practice_ok"]), (1, False))
+        self.assertIsNone(チェック["選手C"]["practice_rating"])
+        # 選手は自分が参加した記録だけ、自分の結果だけ見える
+        Bから = self.呼ぶ("GET", f"/api/tactics/{戦術['id']}", トークン=トークンB)
+        self.assertEqual([(p["checked_on"], [q["name"] for q in p["players"]]) for p in Bから["practices"]], [("2026-09-01", ["選手B"])])
+        self.assertNotIn("checks", Bから)
+        self.assertEqual(self.呼ぶ("GET", f"/api/tactics/{戦術['id']}", トークン=トークンC)["practices"], [])
+        一覧 = {t["id"]: t for t in self.呼ぶ("GET", "/api/tactics", トークン=トークンB)}
+        self.assertEqual((一覧[戦術["id"]]["my_practice_rating"], 一覧[戦術["id"]]["my_practice_ok"], 一覧[戦術["id"]]["practice_count"]), (1, 0, 2))
+        # 削除はコーチだけ。他チームの記録は消せない
+        他コーチ, _ = self.チームを作る("他校")
+        self.呼ぶ("DELETE", f"/api/practice/{記録['id']}", トークン=他コーチ, 期待=404)
+        self.呼ぶ("DELETE", f"/api/practice/{記録['id']}", トークン=トークンA, 期待=403)
+        self.呼ぶ("DELETE", f"/api/practice/{記録['id']}", トークン=コーチ)
+        self.assertEqual(len(self.呼ぶ("GET", f"/api/tactics/{戦術['id']}", トークン=コーチ)["practices"]), 1)
+        # 他チームの選手は登録できない
+        他選手, _ = self.選手を追加(他コーチ, self.呼ぶ("GET", "/api/me", トークン=他コーチ)["team"]["code"], "other1")
+        self.呼ぶ("POST", パス, {**本文, "players": [{"player_id": 他選手}]}, コーチ, 期待=404)
+
+    def test_標準テンプレートに足りない問題を追加(self):
+        コーチ, _ = self.チームを作る()
+        戦術一覧 = [t for t in self.呼ぶ("GET", "/api/tactics", トークン=コーチ) if t["is_template"]]
+        ホーンズ = next(t for t in 戦術一覧 if "ホーンズ" in t["title"])
+        問題 = self.呼ぶ("GET", f"/api/tactics/{ホーンズ['id']}", トークン=コーチ)["quizzes"]
+        self.assertTrue({"選択", "次の動き", "移動先", "位置"} <= {q["quiz_type"] for q in 問題})
+        for q in 問題[:3]:
+            self.呼ぶ("DELETE", f"/api/quizzes/{q['id']}", トークン=コーチ)
+        # 図を変えたテンプレートには、図に関係する問題は足さない
+        ピック = next(t for t in 戦術一覧 if "ピック&ロール（トップ）" in t["title"])
+        詳細 = self.呼ぶ("GET", f"/api/tactics/{ピック['id']}", トークン=コーチ)
+        図 = 詳細["data"]
+        図["frames"][0]["players"][0]["x"] = 100
+        self.呼ぶ("PUT", f"/api/tactics/{ピック['id']}", {"title": ピック["title"], "kind": "オフェンス", "data": 図, "is_template": True}, コーチ)
+        for q in 詳細["quizzes"]:
+            self.呼ぶ("DELETE", f"/api/quizzes/{q['id']}", トークン=コーチ)
+        基本の数 = sum(1 for q in 詳細["quizzes"] if q["frame"] is None and q["quiz_type"] == "選択")
+        self.assertEqual(self.呼ぶ("POST", "/api/team/standard-data", {}, コーチ)["quizzes"], 3 + 基本の数)
+        self.assertEqual(len(self.呼ぶ("GET", f"/api/tactics/{ホーンズ['id']}", トークン=コーチ)["quizzes"]), len(問題))
+        self.assertEqual(len(self.呼ぶ("GET", f"/api/tactics/{ピック['id']}", トークン=コーチ)["quizzes"]), 基本の数)
+        self.assertEqual(self.呼ぶ("POST", "/api/team/standard-data", {}, コーチ)["quizzes"], 0)
+
+    def test_スタッツとシュートエリア(self):
+        コーチ, コード = self.チームを作る()
+        選手, 選手トークン = self.選手を追加(コーチ, コード)
+        # エリア別だけ入力すると FG・3P・得点を自動計算
+        self.呼ぶ("POST", "/api/stats/game", {"date": "2026-06-01", "label": "練習試合", "rows": [
+            {"player_id": 選手, "rebounds": 5, "ftm": 1, "fta": 2, "zones": {"ゴール下": {"a": 4, "m": 3}, "3Pトップ": {"a": 3, "m": 1}}},
+        ]}, コーチ)
+        結果 = self.呼ぶ("GET", f"/api/players/{選手}/stats", トークン=選手トークン)
+        行 = 結果["rows"][0]
+        self.assertEqual((行["fga"], 行["fgm"], 行["tpa"], 行["tpm"], 行["points"]), (7, 4, 3, 1, 10))
+        self.assertEqual(結果["summary"]["fg_pct"], 57.1)
+        self.呼ぶ("POST", f"/api/players/{選手}/stats", {"date": "2026-06-02", "fgm": 5, "fga": 3}, コーチ, 期待=400)
+        self.呼ぶ("POST", f"/api/players/{選手}/stats", {"date": "2026-06-02", "fga": 2, "zones": {"ペイント": {"a": 3, "m": 1}}}, コーチ, 期待=400)
+
+    def test_能力値診断とステップの自動進行(self):
+        コーチ, コード = self.チームを作る()
+        選手, 選手トークン = self.選手を追加(コーチ, コード)
+        カテゴリ = {c["name"]: c["id"] for c in self.呼ぶ("GET", "/api/skill-categories", トークン=コーチ)}
+        self.呼ぶ("POST", f"/api/players/{選手}/assessments", {"items": [
+            {"category_id": カテゴリ["シュート"], "value": 30}, {"category_id": カテゴリ["パス"], "value": 75}, {"category_id": カテゴリ["ドリブル"], "value": 50},
+        ]}, コーチ)
+        self.呼ぶ("POST", f"/api/players/{選手}/assessments", {"items": [{"category_id": カテゴリ["シュート"], "value": 101}]}, 選手トークン, 期待=400)
+        self.呼ぶ("POST", f"/api/players/{選手}/assessments", {"items": [{"category_id": カテゴリ["シュート"], "value": 80}]}, 選手トークン)
+        診断 = {d["name"]: d for d in self.呼ぶ("GET", f"/api/players/{選手}/skills", トークン=選手トークン)["diagnosis"]}
+        self.assertEqual((診断["シュート"]["coach"], 診断["シュート"]["self"]), (30, 80))
+        self.assertTrue(診断["シュート"]["gap_warning"])
+        self.assertEqual(診断["パス"]["level"], "上級")
+        # シュート：(30×0.5 + 80×0.2) / 0.7 = 44 が一番低い
+        self.assertEqual((診断["シュート"]["value"], 診断["シュート"]["priority"], 診断["ドリブル"]["priority"]), (44, 1, 2))
+
+        ステップ = self.呼ぶ("GET", f"/api/players/{選手}/steps", トークン=選手トークン)
+        おすすめ = ステップ["recommendations"]
+        self.assertEqual(おすすめ[0]["category_name"], "シュート")
+        self.assertEqual(おすすめ[0]["drill"]["level"], "中級")  # 中級と診断 → 初級は飛ばす
+        パス = next(r for r in おすすめ if r["category_name"] == "パス")
+        self.assertEqual(パス["drill"]["level"], "上級")
+
+        # クリアしなければ同じステップのまま
+        最初 = おすすめ[0]["drill"]
+        r = self.呼ぶ("POST", f"/api/players/{選手}/steps/report", {"drill_id": 最初["id"], "self_rating": 2, "cleared": False}, 選手トークン)
+        self.assertFalse(r["cleared"])
+        self.assertEqual(self.呼ぶ("GET", f"/api/players/{選手}/steps", トークン=選手トークン)["recommendations"][0]["drill"]["id"], 最初["id"])
+        # クリアすると次のステップが自動で「実施中」に
+        r = self.呼ぶ("POST", f"/api/players/{選手}/steps/report", {"drill_id": 最初["id"], "self_rating": 5, "cleared": True, "video_url": "https://example.com/v"}, 選手トークン)
+        self.assertTrue(r["cleared"])
+        self.assertNotEqual(r["next"]["id"], 最初["id"])
+        self.assertEqual(r["next"]["status"], "実施中")
+        self.呼ぶ("POST", f"/api/players/{選手}/steps/report", {"drill_id": 最初["id"], "self_rating": 5, "video_url": "javascript:alert(1)"}, 選手トークン, 期待=400)
+
+        # コーチが上書きで初級ドリルを提示
+        ドリブル初級 = next(d for d in self.呼ぶ("GET", f"/api/drills?category_id={カテゴリ['ドリブル']}", トークン=コーチ) if d["level"] == "初級")
+        self.呼ぶ("PUT", f"/api/players/{選手}/steps/override", {"category_id": カテゴリ["ドリブル"], "drill_id": ドリブル初級["id"], "note": "基礎から"}, 選手トークン, 期待=403)
+        self.呼ぶ("PUT", f"/api/players/{選手}/steps/override", {"category_id": カテゴリ["ドリブル"], "drill_id": ドリブル初級["id"], "note": "基礎から"}, コーチ)
+        先頭 = self.呼ぶ("GET", f"/api/players/{選手}/steps", トークン=選手トークン)["recommendations"][0]
+        self.assertEqual((先頭["drill"]["id"], 先頭["overridden"], 先頭["override_note"]), (ドリブル初級["id"], True, "基礎から"))
+        # 指定ドリルをクリアすると指定は外れて通常の順番に戻る
+        self.呼ぶ("POST", f"/api/players/{選手}/steps/report", {"drill_id": ドリブル初級["id"], "self_rating": 4, "cleared": True}, 選手トークン)
+        self.assertFalse(self.呼ぶ("GET", f"/api/players/{選手}/steps", トークン=選手トークン)["recommendations"][0]["overridden"])
+
+        一覧 = self.呼ぶ("GET", "/api/steps/overview", トークン=コーチ)
+        self.assertEqual(len(一覧["players"]), 1)
+        self.呼ぶ("GET", "/api/steps/overview", トークン=選手トークン, 期待=403)
+        # カレンダーに報告が反映
+        カレンダー = self.呼ぶ("GET", f"/api/players/{選手}/calendar", トークン=選手トークン)
+        self.assertGreaterEqual(カレンダー["active_days"], 1)
+
+    def test_体力測定から基礎体力を判定(self):
+        コーチ, コード = self.チームを作る()
+        選手, 選手トークン = self.選手を追加(コーチ, コード)
+        他の選手, 他トークン = self.選手を追加(コーチ, コード, "player2", "選手B")
+        # 選手は自分の測定値を記録できる（入力した項目だけ保存）
+        結果 = self.呼ぶ("POST", f"/api/players/{選手}/measurements", {"measured_on": "2026-04-01", "values": {"height": 180, "standing_reach": 230, "jump_reach": 285, "weight": "", "shuttle_17": 56}}, 選手トークン)
+        self.assertEqual(結果["count"], 4)
+        self.assertEqual(結果["score"], 60)  # 最高到達点50点・垂直跳び55cm＝50点・17往復80点の平均
+        垂直 = next(i for i in 結果["items"] if i["key"] == "vertical_jump")
+        self.assertEqual((垂直["value"], 垂直["derived"]), (55, True))
+        診断 = {d["name"]: d for d in self.呼ぶ("GET", f"/api/players/{選手}/skills", トークン=選手トークン)["diagnosis"]}
+        self.assertEqual((診断["基礎体力"]["value"], 診断["基礎体力"]["measure"], 診断["基礎体力"]["level"]), (60, 60, "上級"))
+        # コーチも記録できる。範囲外・他の選手の記録・計算で出す項目はエラー
+        self.呼ぶ("POST", f"/api/players/{選手}/measurements", {"values": {"weight": 70}}, コーチ)
+        self.呼ぶ("POST", f"/api/players/{選手}/measurements", {"values": {"weight": 500}}, コーチ, 期待=400)
+        self.呼ぶ("POST", f"/api/players/{選手}/measurements", {"values": {"vertical_jump": 60}}, コーチ, 期待=400)
+        self.呼ぶ("POST", f"/api/players/{選手}/measurements", {"values": {}}, コーチ, 期待=400)
+        self.呼ぶ("POST", f"/api/players/{選手}/measurements", {"values": {"weight": 60}}, 他トークン, 期待=403)
+        self.呼ぶ("GET", f"/api/players/{選手}/measurements", トークン=他トークン, 期待=403)
+        一覧 = self.呼ぶ("GET", f"/api/players/{選手}/measurements", トークン=選手トークン)
+        self.assertEqual(一覧["score"], 58)  # 体重70kg（50点）が加わる
+        self.assertEqual(len(一覧["history"]), 5)
+        # 記録を消すとスコアも戻る。他の選手の記録は消せない
+        体重 = next(r for r in 一覧["history"] if r["item"] == "weight")
+        self.呼ぶ("DELETE", f"/api/measurements/{体重['id']}", トークン=他トークン, 期待=403)
+        self.呼ぶ("DELETE", f"/api/measurements/{体重['id']}", トークン=選手トークン)
+        self.assertEqual(self.呼ぶ("GET", f"/api/players/{選手}/measurements", トークン=コーチ)["score"], 60)
+        self.assertEqual(self.呼ぶ("GET", f"/api/players/{他の選手}/measurements", トークン=他トークン)["score"], None)
+
+    def test_新しいチームの標準データと追加取り込み(self):
+        コーチ, コード = self.チームを作る()
+        カテゴリ = self.呼ぶ("GET", "/api/skill-categories", トークン=コーチ)
+        self.assertEqual([c["name"] for c in カテゴリ], list(初期データ.スキルカテゴリ))
+        ドリル = self.呼ぶ("GET", "/api/drills", トークン=コーチ)
+        self.assertEqual(len(ドリル), len(初期データ.ステップドリル))
+        for c in カテゴリ:
+            段階 = スキル診断.ドリルを段階順に並べる(d for d in ドリル if d["category_id"] == c["id"])
+            if c["name"] == 体力測定.測定で決めるスキル:
+                self.assertEqual(段階, [])  # 基礎体力はドリルなし（体力測定で判定）
+                continue
+            self.assertEqual([d["level"] for d in 段階], sorted((d["level"] for d in 段階), key=スキル診断.レベル一覧.index))
+            self.assertEqual(sum(1 for d in 段階 if d["next_step_id"] is None), 1)  # 1本の鎖につながっている
+        戦術 = self.呼ぶ("GET", "/api/tactics?kind=すべて", トークン=コーチ)
+        self.assertEqual(len([t for t in 戦術 if t["is_template"]]), len(初期データ.戦術テンプレート()))
+        # 全部そろっていれば何も増えない
+        self.assertEqual(self.呼ぶ("POST", "/api/team/standard-data", {}, コーチ), {"categories": 0, "drills": 0, "tactics": 0, "quizzes": 0})
+        # 消したものだけ戻る。つながりはレベル順のまま
+        シュート = next(c["id"] for c in カテゴリ if c["name"] == "シュート")
+        消す = next(d for d in ドリル if d["category_id"] == シュート and d["level"] == "中級")
+        self.呼ぶ("DELETE", f"/api/drills/{消す['id']}", トークン=コーチ)
+        self.呼ぶ("DELETE", f"/api/tactics/{戦術[0]['id']}", トークン=コーチ)
+        _, 選手トークン = self.選手を追加(コーチ, コード)
+        self.呼ぶ("POST", "/api/team/standard-data", {}, 選手トークン, 期待=403)
+        self.assertEqual(self.呼ぶ("POST", "/api/team/standard-data", {}, コーチ), {"categories": 0, "drills": 1, "tactics": 1, "quizzes": 0})
+        段階 = スキル診断.ドリルを段階順に並べる(self.呼ぶ("GET", f"/api/drills?category_id={シュート}", トークン=コーチ))
+        self.assertEqual([d["level"] for d in 段階], sorted((d["level"] for d in 段階), key=スキル診断.レベル一覧.index))
+        self.assertIn(消す["title"], [d["title"] for d in 段階])
+        self.assertEqual(sum(1 for d in 段階 if d["next_step_id"] is None), 1)
+
+    def test_ドリルの追加と削除でつながりを保つ(self):
+        コーチ, _ = self.チームを作る()
+        シュート = next(c["id"] for c in self.呼ぶ("GET", "/api/skill-categories", トークン=コーチ) if c["name"] == "シュート")
+        並び = lambda: [d["id"] for d in self.呼ぶ("GET", f"/api/drills?category_id={シュート}", トークン=コーチ)]  # noqa: E731
+        元 = 並び()
+        新 = self.呼ぶ("POST", "/api/drills", {"category_id": シュート, "level": "初級", "title": "新ドリル", "insert_after_id": 元[0]}, コーチ)
+        self.assertEqual(並び(), [元[0], 新["id"], *元[1:]])
+        self.呼ぶ("DELETE", f"/api/drills/{元[1]}", トークン=コーチ)
+        self.assertEqual(並び(), [元[0], 新["id"], *元[2:]])
+        self.呼ぶ("PUT", f"/api/drills/{新['id']}", {"category_id": シュート, "title": "自己参照", "next_step_id": 新["id"]}, コーチ, 期待=400)
+
+    def test_目標とフィードバック(self):
+        コーチ, コード = self.チームを作る()
+        選手, 選手トークン = self.選手を追加(コーチ, コード)
+        self.呼ぶ("POST", "/api/goals", {"scope": "チーム", "content": "ベスト8"}, 選手トークン, 期待=403)
+        チーム目標 = self.呼ぶ("POST", "/api/goals", {"scope": "チーム", "content": "ベスト8", "deadline": "2026-08-01"}, コーチ)
+        自分 = self.呼ぶ("POST", "/api/goals", {"scope": "個人", "content": "FT70%"}, 選手トークン)
+        self.呼ぶ("PUT", f"/api/goals/{チーム目標['id']}", {"progress": 50}, 選手トークン, 期待=403)
+        self.呼ぶ("PUT", f"/api/goals/{自分['id']}", {"progress": 100, "status": "達成", "reflection": "毎日50本"}, 選手トークン)
+        目標 = self.呼ぶ("GET", "/api/goals", トークン=選手トークン)
+        self.assertEqual({g["scope"] for g in 目標}, {"チーム", "個人"})
+        self.assertEqual(next(g for g in 目標 if g["id"] == 自分["id"])["reflection"], "毎日50本")
+
+        fb = self.呼ぶ("POST", f"/api/players/{選手}/feedback", {"body": "顔を上げよう"}, コーチ)
+        self.assertEqual(self.呼ぶ("GET", "/api/home", トークン=選手トークン)["unconfirmed_feedback"], 1)
+        self.呼ぶ("POST", f"/api/feedback/{fb['id']}/confirm", {"reply": "はい"}, コーチ, 期待=403)
+        self.呼ぶ("POST", f"/api/feedback/{fb['id']}/confirm", {"reply": "はい"}, 選手トークン)
+        self.assertEqual(self.呼ぶ("GET", "/api/home", トークン=選手トークン)["unconfirmed_feedback"], 0)
+
+    def test_退部とコーチ不在の防止(self):
+        コーチ, コード = self.チームを作る()
+        選手, 選手トークン = self.選手を追加(コーチ, コード)
+        自分 = self.呼ぶ("GET", "/api/me", トークン=コーチ)["user"]["id"]
+        self.呼ぶ("DELETE", f"/api/members/{自分}", トークン=コーチ, 期待=400)
+        self.呼ぶ("PUT", f"/api/members/{自分}", {"name": "監督", "role": "player"}, コーチ, 期待=400)
+        self.呼ぶ("DELETE", f"/api/members/{選手}", トークン=コーチ)
+        self.呼ぶ("GET", "/api/me", トークン=選手トークン, 期待=401)
+        self.assertEqual(len(self.呼ぶ("GET", "/api/members", トークン=コーチ)), 1)
+
+    def test_不正な入力(self):
+        コーチ, _ = self.チームを作る()
+        self.呼ぶ("POST", "/api/teams", {"team_name": "x", "name": "y", "login_id": "ab", "password": "password1"}, 期待=400)
+        self.呼ぶ("POST", "/api/teams", {"team_name": "x", "name": "y", "login_id": "abc", "password": "short"}, 期待=400)
+        self.呼ぶ("POST", "/api/events", {"date": "2026-13-01"}, コーチ, 期待=400)
+        self.呼ぶ("POST", "/api/events", {"date": "2026-06-01", "start_time": "18:00", "end_time": "17:00"}, コーチ, 期待=400)
+        self.呼ぶ("POST", "/api/members", {"name": "x", "login_id": "abc", "photo": "data:text/html;base64,AAAA"}, コーチ, 期待=400)
+        self.呼ぶ("GET", "/api/存在しない", トークン=コーチ, 期待=404)
+        要求 = urllib.request.Request(self.基本 + "/api/login", data=b"{broken", method="POST")
+        with self.assertRaises(urllib.error.HTTPError) as 例外:
+            urllib.request.urlopen(要求)
+        self.assertEqual(例外.exception.code, 400)
+
+
+if __name__ == "__main__":
+    unittest.main()
