@@ -33,6 +33,9 @@ export function ログイン状態を消去() {
 
 export const コーチか = () => 状態.ユーザー?.role === 'coach';
 
+// ブラウザ版（お試し版）：サーバーの代わりにブラウザの中で API を動かす（ウェブ版/起動処理.js が設定する）
+export const お試し版 = () => globalThis.お試し版 || null;
+
 export class API失敗 extends Error {
   constructor(メッセージ, ステータス) { super(メッセージ); this.ステータス = ステータス; }
 }
@@ -51,7 +54,7 @@ export async function api(メソッド, パス, 本文) {
   }
   let 応答;
   try {
-    応答 = await fetch(パス, 設定);
+    応答 = await (お試し版()?.fetch ?? fetch)(パス, 設定);
   } catch {
     throw new API失敗('通信できませんでした。電波の良い場所で再度お試しください', 0);
   }

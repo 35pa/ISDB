@@ -1,7 +1,7 @@
 // 画面の切り替え（#/〜 のハッシュで遷移）・下部メニュー・ログイン／チーム作成
 
 import {
-  api, 置き換え, h, 状態, 描画, 遷移 as 遷移状態, 遷移により中断, 見出し, 読み込み中, エラー表示, フォーム, 通知, ログイン状態を保存, コーチか, シート,
+  api, 置き換え, h, 状態, 描画, 遷移 as 遷移状態, 遷移により中断, 見出し, 読み込み中, エラー表示, フォーム, 通知, エラー通知, ログイン状態を保存, コーチか, シート, お試し版,
 } from './共通.js';
 
 const ルート表 = [
@@ -113,7 +113,27 @@ function ログイン画面() {
           ホームへ();
         }, { 送信文言: 'ログイン' })),
       h('p', { class: '補足' }, 'チームコードとログインIDはコーチ（顧問）から教えてもらってください'),
-      h('a', { class: 'ボタン 控えめ 大', href: '#/register' }, '新しくチームを作る（コーチ用）')));
+      h('a', { class: 'ボタン 控えめ 大', href: '#/register' }, '新しくチームを作る（コーチ用）'),
+      お試し版() ? お試し版の案内() : null));
+}
+
+// お試し版：デモ用チームにすぐ入れるボタン
+function お試し版の案内() {
+  const { チームコード, パスワード } = お試し版().デモ;
+  const 入る = async (ログインID) => {
+    try {
+      const 結果 = await api('POST', '/api/login', { team_code: チームコード, login_id: ログインID, password: パスワード });
+      ログイン状態を保存(結果.token, 結果.user, 結果.team);
+      ホームへ();
+    } catch (エラー) { エラー通知(エラー); }
+  };
+  return h('section', { class: 'カード お試し' },
+    h('h2', {}, 'お試し版'),
+    h('p', {}, 'サンプルデータ入りのデモチームで、すべての機能を試せます。入力したデータはこの端末の中だけに保存されます。'),
+    h('div', { class: 'ボタン列 折返し' },
+      h('button', { class: 'ボタン', onclick: () => 入る('coach') }, 'コーチとして試す'),
+      h('button', { class: 'ボタン 控えめ', onclick: () => 入る('player1') }, '選手として試す')),
+    h('small', { class: 'ブロック' }, `チームコード ${チームコード} ／ ログインID coach（コーチ）・player1〜player8（選手） ／ パスワード ${パスワード}`));
 }
 
 function チーム作成画面() {
@@ -176,6 +196,6 @@ window.addEventListener('online', () => 通知('オンラインに戻りまし�
 window.addEventListener('offline', () => 通知('オフラインです。保存済みの練習メニュー・作戦は閲覧できます', '注意'));
 遷移();
 
-if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+if ('serviceWorker' in navigator && location.protocol !== 'file:' && !お試し版()) {
   navigator.serviceWorker.register('./オフライン対応.js').catch(() => { /* 対応していない環境では無視 */ });
 }
