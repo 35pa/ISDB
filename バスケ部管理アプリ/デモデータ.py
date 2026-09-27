@@ -196,5 +196,40 @@ def デモチームを作成(接続先: sqlite3.Connection) -> str:
         "INSERT INTO issues (team_id, player_id, title, detail, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
         (チームID, 選手ID[0], "左手のレイアップ", "左からのドライブで右手に持ち替えてしまう", コーチID, 時刻, 時刻),
     )
+    _作戦の理解度デモ(接続先, チームID, コーチID, 選手ID, 本日, 時刻)
     接続先.commit()
     return 案内
+
+
+def _作戦の理解度デモ(接続先: sqlite3.Connection, チームID: int, コーチID: int, 選手ID: list[int], 本日, 時刻: str) -> None:
+    """5アウトの理解度（クイズの回答・理解度・実技チェック）のサンプル。1人目（デモでログインする選手）は未回答のまま。"""
+    戦術ID = 接続先.execute("SELECT id FROM tactics WHERE team_id = ? AND title LIKE '%5アウト%'", (チームID,)).fetchone()[0]
+    クイズ = 接続先.execute("SELECT id, quiz_type, answer_index, target FROM tactic_quizzes WHERE tactic_id = ? ORDER BY id", (戦術ID,)).fetchall()
+    乱数 = random.Random(7)
+    for 番号, p in enumerate(選手ID[1:6]):
+        for q in クイズ:
+            正解 = 乱数.random() < 0.95 - 番号 * 0.12
+            if q["quiz_type"] in ("移動先", "位置"):
+                目標 = json.loads(q["target"])
+                x, y = (目標["x"], 目標["y"]) if 正解 else (min(500, 目標["x"] + 120), 目標["y"])
+                値 = (q["id"], p, 0, int(正解), 時刻, x, y)
+            else:
+                値 = (q["id"], p, q["answer_index"] if 正解 else (q["answer_index"] + 1) % 2, int(正解), 時刻, None, None)
+            接続先.execute("INSERT INTO tactic_answers (quiz_id, user_id, choice, correct, answered_at, tap_x, tap_y) VALUES (?, ?, ?, ?, ?, ?, ?)", 値)
+        接続先.execute(
+            "INSERT INTO tactic_checks (tactic_id, user_id, understood, comment, updated_at) VALUES (?, ?, ?, ?, ?)",
+            (戦術ID, p, 2 if 番号 < 3 else 1, "カットの後、どこに抜けるか迷う" if 番号 == 3 else "", 時刻),
+        )
+    for 日数, 評価, 良い, コマ, メモ in (
+        (9, 1, (True, True, False, True, False), [True, True, False, True], "3番のトップの埋めが遅く、形が崩れた。空いた場所を見て早めに動く"),
+        (2, 2, (True, True, True, True, True), [True, True, True, True], "5人とも声を出して、止まらずに埋められた"),
+    ):
+        記録ID = 接続先.execute(
+            """INSERT INTO tactic_practice (team_id, tactic_id, checked_on, rating, frames_ok, note, coach_id, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (チームID, 戦術ID, (本日 - timedelta(days=日数)).isoformat(), 評価, json.dumps(コマ), メモ, コーチID, 時刻),
+        ).lastrowid
+        for 位置, (p, 良) in enumerate(zip(選手ID[:5], 良い)):
+            接続先.execute(
+                "INSERT INTO tactic_practice_players (practice_id, player_id, position, ok) VALUES (?, ?, ?, ?)", (記録ID, p, f"O{位置 + 1}", int(良))
+            )

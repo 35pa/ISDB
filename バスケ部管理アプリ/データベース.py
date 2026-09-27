@@ -162,7 +162,11 @@ CREATE TABLE IF NOT EXISTS tactic_quizzes (
   question TEXT NOT NULL,
   choices TEXT NOT NULL,
   answer_index INTEGER NOT NULL,
-  explanation TEXT NOT NULL DEFAULT ''
+  explanation TEXT NOT NULL DEFAULT '',
+  quiz_type TEXT NOT NULL DEFAULT '選択',
+  position TEXT NOT NULL DEFAULT '',
+  frame INTEGER,
+  target TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS tactic_answers (
@@ -171,6 +175,8 @@ CREATE TABLE IF NOT EXISTS tactic_answers (
   choice INTEGER NOT NULL,
   correct INTEGER NOT NULL,
   answered_at TEXT NOT NULL,
+  tap_x REAL,
+  tap_y REAL,
   PRIMARY KEY (quiz_id, user_id)
 );
 
@@ -182,6 +188,29 @@ CREATE TABLE IF NOT EXISTS tactic_checks (
   updated_at TEXT NOT NULL,
   PRIMARY KEY (tactic_id, user_id)
 );
+
+-- 実技チェック：コートで5人がそろって動けたかをコーチが記録する
+CREATE TABLE IF NOT EXISTS tactic_practice (
+  id INTEGER PRIMARY KEY,
+  team_id INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+  tactic_id INTEGER NOT NULL REFERENCES tactics(id) ON DELETE CASCADE,
+  checked_on TEXT NOT NULL,
+  rating INTEGER NOT NULL CHECK (rating BETWEEN 0 AND 2),
+  frames_ok TEXT NOT NULL DEFAULT '[]',
+  note TEXT NOT NULL DEFAULT '',
+  coach_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_practice_tactic ON tactic_practice(tactic_id, checked_on);
+
+CREATE TABLE IF NOT EXISTS tactic_practice_players (
+  practice_id INTEGER NOT NULL REFERENCES tactic_practice(id) ON DELETE CASCADE,
+  player_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  position TEXT NOT NULL DEFAULT '',
+  ok INTEGER NOT NULL DEFAULT 1,
+  PRIMARY KEY (practice_id, player_id)
+);
+CREATE INDEX IF NOT EXISTS idx_practice_player ON tactic_practice_players(player_id);
 
 CREATE TABLE IF NOT EXISTS issues (
   id INTEGER PRIMARY KEY,
@@ -336,6 +365,17 @@ def 初期化(接続先: sqlite3.Connection) -> None:
 
 def _旧バージョンのデータを更新(接続先: sqlite3.Connection) -> None:
     """以前のバージョンで作ったデータベースを、今のバージョンで使える形にそろえる。"""
+    # 後から増えた列を追加する（理解度クイズの種類・ポジション・タップ問題）
+    for 表, 列, 定義 in (
+        ("tactic_quizzes", "quiz_type", "TEXT NOT NULL DEFAULT '選択'"),
+        ("tactic_quizzes", "position", "TEXT NOT NULL DEFAULT ''"),
+        ("tactic_quizzes", "frame", "INTEGER"),
+        ("tactic_quizzes", "target", "TEXT NOT NULL DEFAULT ''"),
+        ("tactic_answers", "tap_x", "REAL"),
+        ("tactic_answers", "tap_y", "REAL"),
+    ):
+        if 列 not in {行[1] for 行 in 接続先.execute(f"PRAGMA table_info({表})").fetchall()}:
+            接続先.execute(f"ALTER TABLE {表} ADD COLUMN {列} {定義}")
     # ドリルのレベルが3段階（初級・中級・上級）だった頃の表を、5段階（基礎〜プロ）を入れられる表に作り直す
     定義 = 接続先.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'drill_steps'").fetchone()[0]
     if "'基礎'" not in 定義:

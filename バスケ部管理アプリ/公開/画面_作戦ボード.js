@@ -1,7 +1,7 @@
-// 作戦ボード：戦術図の一覧・閲覧（コマ送り／再生）・作成／編集、画像・PDF 出力、理解度チェック（クイズ・コメント）
+// 作戦ボード：戦術図の一覧・閲覧（コマ送り／再生）・作成／編集、画像・PDF 出力、理解度チェック（クイズ・コメント・実技チェック）
 
 import {
-  api, 置き換え, h, s, 描画, 見出し, コーチか, 日時表示, バッジ, 空表示, 通知, エラー通知, 確認, シート, フォーム, タブ, オフライン注記, 状態,
+  api, 置き換え, h, s, 描画, 見出し, コーチか, 日時表示, 日付表示, 今日の日付, バッジ, 空表示, 通知, エラー通知, 確認, シート, フォーム, タブ, オフライン注記, 状態,
 } from './共通.js';
 import { コートの線, コート } from './図表.js';
 
@@ -12,8 +12,25 @@ const 配色 = {
 const 線の名前 = { move: '移動', dribble: 'ドリブル', pass: 'パス', screen: 'スクリーン' };
 const 理解度 = ['よく分からない', 'だいたい分かった', '理解した'];
 const 理解度の色 = ['悪', '注意', '良'];
+// 理解度クイズの種類（並びは出題の順：形→基本→次の動き→移動先）
+const 問題の種類 = [['位置', '位置タップ'], ['選択', '基本'], ['次の動き', '次の動き'], ['移動先', '移動先タップ']];
+const 種類の名前 = Object.fromEntries(問題の種類);
+const タップ問題 = (q) => q.quiz_type === '移動先' || q.quiz_type === '位置';
+const できばえ = ['できなかった', '一部できた', '5人でそろってできた'];
+const できばえの色 = ['悪', '注意', '良'];
+const 正解の色 = '#16a34a';
 let 一覧の絞り込み = 'すべて';
 let テンプレートの分類 = 'すべて';
+let クイズの絞り込み = 'すべて';
+
+// 図の選手ID → 呼び名（O3 → 3番、X4 → X4）
+function 選手名(id) {
+  return id.startsWith('O') ? `${id.slice(1)}番` : id;
+}
+
+function 位置の一覧(位置) {
+  return (位置 || '').split(',').filter(Boolean);
+}
 
 // タイトル先頭の【】を分類として扱う（例：【セットプレー】ピック&ロール）
 function 分類(戦術) {
@@ -70,13 +87,14 @@ function 線を描く(線, { 選択時 = null } = {}) {
     選択時 ? s('polyline', { points: 点.map((p) => p.join(',')).join(' '), fill: 'none', stroke: 'transparent', 'stroke-width': 18 }) : null);
 }
 
-function 選手を描く(p, ボール保持, { 押下 = null } = {}) {
+function 選手を描く(p, ボール保持, { 押下 = null, 強調 = false, 薄く = false } = {}) {
   const 味方 = p.team === 'O';
   return s('g', {
     class: `選手駒 ${押下 ? '動かせる' : ''}`, transform: `translate(${p.x} ${p.y})`, 'data-id': p.id,
-    onpointerdown: 押下 ? (e) => 押下(e, p) : null,
+    onpointerdown: 押下 ? (e) => 押下(e, p) : null, opacity: 薄く ? 0.75 : null,
   },
   押下 ? s('circle', { r: 26, fill: 'transparent' }) : null,
+  強調 ? s('circle', { r: 24, fill: 'none', stroke: '#facc15', 'stroke-width': 5 }) : null,
   味方
     ? s('circle', { r: 16, fill: 配色.味方, stroke: '#fff', 'stroke-width': 2 })
     : s('g', {}, s('circle', { r: 16, fill: '#fff', stroke: 配色.相手, 'stroke-width': 3 })),
@@ -84,10 +102,21 @@ function 選手を描く(p, ボール保持, { 押下 = null } = {}) {
   ボール保持 ? s('circle', { cx: 13, cy: -13, r: 7, fill: 配色.ボール, stroke: '#7c2d12', 'stroke-width': 1.5 }) : null);
 }
 
-export function ボードSVG(コマ, { 編集 = null, クラス = '' } = {}) {
+// 画面上のタップ位置を図の座標（横500×縦470）に直す
+function SVG座標(svg, e) {
+  const 点 = svg.createSVGPoint();
+  点.x = e.clientX;
+  点.y = e.clientY;
+  const p = 点.matrixTransform(svg.getScreenCTM().inverse());
+  return [Math.round(Math.max(0, Math.min(コート.幅, p.x))), Math.round(Math.max(0, Math.min(コート.奥行, p.y)))];
+}
+
+// 重ね：最後に重ねて描く SVG 要素（正解の円など）、強調：黄色の輪で囲む選手ID、タップ：図をタップしたとき (座標) => {}
+export function ボードSVG(コマ, { 編集 = null, クラス = '', 重ね = [], 強調 = null, タップ = null } = {}) {
   return s('svg', {
-    viewBox: `0 0 ${コート.幅} ${コート.奥行}`, class: `作戦ボード ${クラス}`, role: 'img', 'aria-label': '作戦ボード',
+    viewBox: `0 0 ${コート.幅} ${コート.奥行}`, class: `作戦ボード ${クラス} ${タップ ? 'タップできる' : ''}`, role: 'img', 'aria-label': '作戦ボード',
     onpointerdown: 編集?.背景押下, onpointermove: 編集?.移動, onpointerup: 編集?.離す, onpointercancel: 編集?.離す,
+    onclick: タップ ? (e) => タップ(SVG座標(e.currentTarget, e)) : null,
   },
   s('defs', {}, s('marker', { id: 'board-arrow', viewBox: '0 0 10 10', refX: 8, refY: 5, markerWidth: 5, markerHeight: 5, orient: 'auto-start-reverse' },
     s('path', { d: 'M 0 0 L 10 5 L 0 10 z', fill: 配色.矢印 }))),
@@ -95,7 +124,8 @@ export function ボードSVG(コマ, { 編集 = null, クラス = '' } = {}) {
   コートの線(配色.線, 配色.リング),
   s('g', { class: '線の層' }, (コマ.lines || []).map((線, i) => 線を描く(線, { 選択時: 編集?.線を選ぶ ? () => 編集.線を選ぶ(i) : null }))),
   編集?.描画中の線 ? 線を描く(編集.描画中の線) : null,
-  s('g', { class: '選手の層' }, (コマ.players || []).map((p) => 選手を描く(p, コマ.ball === p.id, { 押下: 編集?.選手押下 }))));
+  s('g', { class: '選手の層' }, (コマ.players || []).map((p) => 選手を描く(p, コマ.ball === p.id, { 押下: 編集?.選手押下, 強調: p.id === 強調 }))),
+  s('g', { class: '重ねの層' }, 重ね));
 }
 
 // ---------- 書き出し（画像・PDF・共有） ----------
@@ -243,9 +273,10 @@ export async function 戦術一覧画面() {
           t.published ? null : バッジ('非公開', '注意'),
           h('small', {}, `${t.data.frames.length}コマ`)),
         コーチか()
-          ? h('small', {}, `理解した ${t.understood_count}人`)
+          ? h('small', {}, `理解した ${t.understood_count}人${t.practice_count ? ` ・ 実技チェック ${t.practice_count}回` : ''}`)
           : h('div', { class: 'バッジ列' },
             t.my_understood === null ? バッジ('未確認', '強調') : バッジ(理解度[t.my_understood], 理解度の色[t.my_understood]),
+            t.my_practice_rating === null ? null : バッジ(`実技${t.my_practice_ok && t.my_practice_rating === 2 ? '◯' : '△'}`, t.my_practice_ok && t.my_practice_rating === 2 ? '良' : '注意'),
             t.quiz_count ? h('small', {}, `クイズ ${t.my_correct}/${t.quiz_count} 正解`) : null)))))
       : 空表示(絞り込み === 'テンプレート' ? 'テンプレートはありません' : 'まだ戦術がありません'),
     h('p', { class: '補足' }, '戦術図は一度開くとオフラインでも見られます'));
@@ -323,30 +354,175 @@ function 再生ビューア(戦術) {
   };
 }
 
-function クイズ欄(戦術) {
-  const 欄 = h('div', { class: 'クイズ一覧' });
-  for (const [番号, q] of 戦術.quizzes.entries()) {
-    const 結果欄 = h('div', { class: 'クイズ結果' });
-    const 選択肢 = q.choices.map((c, i) => h('button', {
-      class: `選択肢 ${q.my_choice === i ? '選んだ' : ''} ${q.answer_index === i && q.my_choice !== null ? '正解' : ''}`,
+// ---------- 理解度クイズ ----------
+
+// 選手から始まる線（その選手の動き・パス・スクリーン）。サーバーの 戦術クイズ.選手の線 と同じ判定
+function 自分の線か(線, 選手) {
+  return Boolean(選手) && Math.hypot(線.points[0][0] - 選手.x, 線.points[0][1] - 選手.y) <= 30;
+}
+
+// 問題と一緒に見せるコマ。次の動き・移動先は対象の選手の線（答え）を隠し、位置は対象の選手ごと隠す
+function 問題用のコマ(戦術, q) {
+  const コマ = q.frame === null || q.frame === undefined ? null : 戦術.data.frames[q.frame];
+  if (!コマ) return null;
+  const 対象 = 位置の一覧(q.position)[0];
+  const 選手 = コマ.players.find((p) => p.id === 対象);
+  const 線 = (q.quiz_type === '次の動き' && !選手) ? [] : コマ.lines.filter((l) => !自分の線か(l, 選手));
+  if (q.quiz_type === '選択') return コマ;
+  if (q.quiz_type === '位置') {
+    return { ...コマ, lines: 線, players: コマ.players.filter((p) => p.id !== 対象), ball: コマ.ball === 対象 ? null : コマ.ball };
+  }
+  return { ...コマ, lines: 線 };
+}
+
+// 選択肢の並びを問題ごとに混ぜる（いつも同じ番号が正解にならないように）。同じ問題はいつも同じ並び
+function 並び順(q) {
+  const 順 = q.choices.map((_, i) => i);
+  let 種 = (q.id * 2654435761) % 4294967296;
+  for (let i = 順.length - 1; i > 0; i--) {
+    種 = (種 * 1103515245 + 12345) % 2147483648;
+    const j = 種 % (i + 1);
+    [順[i], 順[j]] = [順[j], 順[i]];
+  }
+  return 順;
+}
+
+function 正解の印(戦術, q, 目標) {
+  // 正解の範囲（緑の円）と、正解の位置に立つ選手（半透明）
+  const 対象 = 位置の一覧(q.position)[0];
+  const コマ番号 = q.quiz_type === '移動先' ? q.frame + 1 : q.frame;
+  const 元 = (戦術.data.frames[コマ番号] || 戦術.data.frames[q.frame])?.players.find((p) => p.id === 対象);
+  return [
+    s('circle', { cx: 目標.x, cy: 目標.y, r: 目標.r, fill: 'rgba(22, 163, 74, 0.22)', stroke: 正解の色, 'stroke-width': 3, 'stroke-dasharray': '9 6' }),
+    元 ? 選手を描く({ ...元, x: 目標.x, y: 目標.y }, false, { 薄く: true }) : null,
+  ];
+}
+
+function タップの印([x, y], 正解 = null) {
+  const 色 = 正解 === null ? '#111827' : 正解 ? 正解の色 : '#dc2626';
+  return s('g', { transform: `translate(${x} ${y})` },
+    s('circle', { r: 11, fill: 色, stroke: '#fff', 'stroke-width': 3 }),
+    s('path', { d: 'M -5 -5 L 5 5 M 5 -5 L -5 5', stroke: '#fff', 'stroke-width': 3, 'stroke-linecap': 'round' }));
+}
+
+function 結果を表示(結果欄, 正解, 解説, 追記 = '') {
+  置き換え(結果欄,
+    h('strong', { class: 正解 ? '良 文字' : '悪 文字' }, 正解 ? '⭕ 正解！' : `❌ 不正解${追記}`),
+    解説 ? h('p', {}, 解説) : null);
+}
+
+function 選択問題(戦術, q, 結果欄, 回答後) {
+  const 順 = 並び順(q);
+  const ボタン = {};
+  const 色を付ける = (選んだ, 正解) => Object.entries(ボタン).forEach(([i, b]) => {
+    b.classList.toggle('選んだ', Number(i) === 選んだ);
+    b.classList.toggle('正解', Number(i) === 正解);
+  });
+  for (const i of 順) {
+    ボタン[i] = h('button', {
+      class: '選択肢',
       onclick: async () => {
         try {
           const r = await api('POST', `/api/quizzes/${q.id}/answer`, { choice: i });
-          選択肢.forEach((b, k) => {
-            b.classList.toggle('選んだ', k === i);
-            b.classList.toggle('正解', k === r.answer_index);
-          });
-          置き換え(結果欄, h('strong', { class: r.correct ? '良 文字' : '悪 文字' }, r.correct ? '⭕ 正解！' : '❌ 不正解'), r.explanation ? h('p', {}, r.explanation) : null);
+          色を付ける(i, r.answer_index);
+          結果を表示(結果欄, r.correct, r.explanation);
+          回答後(r.correct);
         } catch (エラー) { エラー通知(エラー); }
       },
-    }, c));
-    if (q.my_choice !== null) {
-      結果欄.append(h('strong', { class: q.my_correct ? '良 文字' : '悪 文字' }, q.my_correct ? '⭕ 正解' : '❌ 不正解（もう一度選べます）'), q.explanation ? h('p', {}, q.explanation) : null);
-    }
+    }, q.choices[i]);
+  }
+  if (q.my_choice !== null) {
+    色を付ける(q.my_choice, q.answer_index);
+    結果を表示(結果欄, q.my_correct, q.explanation, '（もう一度選べます）');
+  }
+  const コマ = 問題用のコマ(戦術, q);
+  return [
+    コマ ? h('figure', { class: 'クイズ図' },
+      h('div', { class: 'ボード枠 クイズ盤' }, ボードSVG(コマ, { 強調: q.quiz_type === '次の動き' ? 位置の一覧(q.position)[0] : null })),
+      h('figcaption', {}, q.quiz_type === '次の動き' ? `コマ${q.frame + 1}で止めています（黄色の輪＝問題の選手）` : `コマ${q.frame + 1}`)) : null,
+    h('div', { class: '選択肢列' }, 順.map((i) => ボタン[i])),
+    コーチか() ? h('small', {}, `正解：${q.choices[q.answer_index]}`) : null,
+  ];
+}
+
+function タップ問題の欄(戦術, q, 結果欄, 回答後) {
+  const コマ = 問題用のコマ(戦術, q);
+  if (!コマ) return h('p', { class: '補足' }, '図のコマが見つかりません（図が変更されました）');
+  const 枠 = h('div', { class: 'ボード枠 クイズ盤' });
+  const 対象 = 位置の一覧(q.position)[0];
+  let 印 = q.my_tap ? [q.my_tap.x, q.my_tap.y] : null;
+  let 目標 = q.target;
+  let 答えた = q.my_tap !== null;
+  let 正解 = q.my_correct;
+  const 答える = h('button', {
+    class: 'ボタン', disabled: true,
+    onclick: async () => {
+      try {
+        const r = await api('POST', `/api/quizzes/${q.id}/answer`, { x: 印[0], y: 印[1] });
+        答えた = true;
+        正解 = r.correct;
+        目標 = r.target;
+        結果を表示(結果欄, r.correct, r.explanation);
+        回答後(r.correct);
+        更新();
+      } catch (エラー) { エラー通知(エラー); }
+    },
+  }, 'ここで答える');
+  const もう一度 = h('button', {
+    class: 'ボタン 控えめ',
+    onclick: () => { 答えた = false; 印 = null; 正解 = null; 置き換え(結果欄); 更新(); },
+  }, 'もう一度');
+  const 案内 = h('small', { class: 'ブロック' });
+  function 更新() {
+    const 重ね = [];
+    if (目標 && (答えた || コーチか())) 重ね.push(...正解の印(戦術, q, 目標));
+    if (印) 重ね.push(タップの印(印, 答えた ? 正解 : null));
+    置き換え(枠, ボードSVG(コマ, {
+      強調: q.quiz_type === '移動先' ? 対象 : null,
+      重ね,
+      タップ: 答えた ? null : (点) => { 印 = 点; 答える.disabled = false; 更新(); },
+    }));
+    答える.hidden = 答えた;
+    答える.disabled = !印;
+    もう一度.hidden = !答えた;
+    案内.textContent = 答えた ? '緑の円＝正解の範囲' : 印 ? '位置がよければ「ここで答える」。タップし直すと動かせます' : '図をタップして答えよう';
+  }
+  更新();
+  if (答えた) 結果を表示(結果欄, q.my_correct, q.explanation, '（もう一度答えられます）');
+  return [
+    h('figure', { class: 'クイズ図' }, 枠,
+      h('figcaption', {}, `コマ${q.frame + 1}${q.quiz_type === '移動先' ? '（黄色の輪＝問題の選手）' : `（${選手名(対象)}を隠しています）`}`)),
+    案内,
+    h('div', { class: 'ボタン列' }, 答える, もう一度),
+  ];
+}
+
+function クイズ欄(戦術) {
+  const 位置 = [...new Set(戦術.quizzes.flatMap((q) => 位置の一覧(q.position)))]
+    .sort((a, b) => a[0].localeCompare(b[0]) || Number(a.slice(1)) - Number(b.slice(1)));
+  if (クイズの絞り込み !== 'すべて' && クイズの絞り込み !== '共通' && !位置.includes(クイズの絞り込み)) クイズの絞り込み = 'すべて';
+  const 対象 = 戦術.quizzes
+    .filter((q) => クイズの絞り込み === 'すべて' || (クイズの絞り込み === '共通' ? !q.position : 位置の一覧(q.position).includes(クイズの絞り込み)))
+    .sort((a, b) => 問題の種類.findIndex(([k]) => k === a.quiz_type) - 問題の種類.findIndex(([k]) => k === b.quiz_type) || a.id - b.id);
+  const 正解数 = new Map(戦術.quizzes.map((q) => [q.id, q.my_correct === true]));
+  const 集計 = h('div', { class: 'クイズ集計' });
+  const 集計を更新 = () => {
+    置き換え(集計, ...問題の種類.map(([種類, 名前]) => {
+      const 同じ = 対象.filter((q) => q.quiz_type === 種類);
+      return 同じ.length ? h('span', {}, `${名前} `, h('strong', {}, `${同じ.filter((q) => 正解数.get(q.id)).length}/${同じ.length}`)) : null;
+    }));
+  };
+  集計を更新();
+  const 欄 = h('div', { class: 'クイズ一覧' });
+  for (const [番号, q] of 対象.entries()) {
+    const 結果欄 = h('div', { class: 'クイズ結果' });
+    const 回答後 = (正解) => { 正解数.set(q.id, 正解); 集計を更新(); };
     欄.append(h('div', { class: 'クイズ' },
+      h('div', { class: 'バッジ列' },
+        バッジ(種類の名前[q.quiz_type] || '基本', タップ問題(q) ? '強調' : q.quiz_type === '次の動き' ? '注意' : '薄'),
+        位置の一覧(q.position).length ? バッジ(`${位置の一覧(q.position).map(選手名).join('・')}向け`, 戦術.kind === 'オフェンス' ? '味方' : '相手') : null),
       h('p', { class: '問題' }, `Q${番号 + 1}. ${q.question}`),
-      コーチか() ? h('small', {}, `正解：${q.choices[q.answer_index]}`) : null,
-      h('div', { class: '選択肢列' }, 選択肢),
+      タップ問題(q) ? タップ問題の欄(戦術, q, 結果欄, 回答後) : 選択問題(戦術, q, 結果欄, 回答後),
       結果欄,
       コーチか() ? h('div', { class: 'ボタン列' },
         h('button', { class: 'ボタン 控えめ 小', onclick: () => クイズ編集(戦術, q) }, '編集'),
@@ -358,22 +534,177 @@ function クイズ欄(戦術) {
           },
         }, '削除')) : null));
   }
-  return 欄;
+  return h('div', {},
+    位置.length ? h('div', { class: '分類タブ' },
+      h('small', { class: 'ブロック' }, '自分のポジションを選ぶと、そのポジション向けの問題だけ出ます'),
+      タブ([['すべて', 'すべて'], ['共通', '全員向け'], ...位置.map((p) => [p, 選手名(p)])], クイズの絞り込み, (v) => { クイズの絞り込み = v; 戦術詳細画面(戦術.id); })) : null,
+    集計,
+    対象.length ? 欄 : 空表示('このポジション向けの問題はありません'));
 }
 
 async function クイズ編集(戦術, q = null) {
-  const 保存 = await シート(q ? 'クイズを編集' : 'クイズを追加', (閉じる) => フォーム([
-    { 名前: 'question', ラベル: '問題', 必須: true, 種類: 'textarea', 行数: 2 },
-    { 名前: 'choices', ラベル: '選択肢（1行に1つ、2〜5個）', 必須: true, 種類: 'textarea', 行数: 4 },
-    { 名前: 'answer', ラベル: '正解は何番目？', 種類: 'number', 最小: 1, 最大値: 5, 必須: true, 入力モード: 'numeric' },
-    { 名前: 'explanation', ラベル: '解説（回答後に表示）', 種類: 'textarea', 行数: 2 },
-  ], async (v) => {
-    const 本文 = { question: v.question, choices: v.choices.split('\n').map((x) => x.trim()).filter(Boolean), answer_index: v.answer - 1, explanation: v.explanation };
-    if (q) await api('PUT', `/api/quizzes/${q.id}`, 本文);
-    else await api('POST', `/api/tactics/${戦術.id}/quizzes`, 本文);
-    閉じる(true);
-  }, { 値: q ? { question: q.question, choices: q.choices.join('\n'), answer: q.answer_index + 1, explanation: q.explanation } : { answer: 1 } }));
+  const コマ数 = 戦術.data.frames.length;
+  const チーム = 戦術.kind === 'オフェンス' ? 'O' : 'X';
+  const 選手ID = [...new Set(戦術.data.frames.flatMap((f) => f.players.map((p) => p.id)))]
+    .sort((a, b) => (a[0] === チーム ? 0 : 1) - (b[0] === チーム ? 0 : 1) || a.localeCompare(b) || 0);
+  const 値 = {
+    quiz_type: q?.quiz_type || '選択', position: 位置の一覧(q?.position), frame: q?.frame ?? null,
+    target: q?.target ? { ...q.target } : null,
+  };
+  const 保存 = await シート(q ? 'クイズを編集' : 'クイズを追加', (閉じる) => {
+    const 項目 = (ラベル, 要素, 補足 = null) => h('div', { class: '項目' }, h('label', {}, ラベル), 要素, 補足 ? h('small', {}, 補足) : null);
+    const 種類 = h('select', {}, [
+      ['選択', '基本（選択肢から選ぶ）'], ['次の動き', '次の動き（コマを止めて選ぶ）'], ['移動先', '移動先タップ（動く先を図で答える）'], ['位置', '位置タップ（立つ位置を図で答える）'],
+    ].map(([v, 名前]) => h('option', { value: v, selected: v === 値.quiz_type }, 名前)));
+    const コマ = h('select', {}, [h('option', { value: '' }, 'なし'), ...戦術.data.frames.map((f, i) => h('option', { value: i, selected: 値.frame === i }, `コマ${i + 1}：${(f.note || '').slice(0, 20)}`))]);
+    const 位置列 = h('div', { class: '位置列' }, 選手ID.map((id) => h('label', { class: '位置札' },
+      h('input', { type: 'checkbox', value: id, checked: 値.position.includes(id) }), h('span', {}, 選手名(id)))));
+    const 問題文 = h('textarea', { rows: 2, maxLength: 300, placeholder: '例：5番の次の動きは？' });
+    問題文.value = q?.question || '';
+    const 選択肢 = h('textarea', { rows: 4, placeholder: '1行に1つ（2〜5個）' });
+    選択肢.value = q?.choices?.join('\n') || '';
+    const 正解 = h('input', { type: 'number', min: 1, max: 5, inputMode: 'numeric', value: q && !タップ問題(q) ? q.answer_index + 1 : 1 });
+    const 解説 = h('textarea', { rows: 2, maxLength: 1000, placeholder: '回答後に表示されます' });
+    解説.value = q?.explanation || '';
+    const 半径 = h('select', {}, [[35, '小（せまい）'], [50, 'ふつう'], [70, '大（広い）']].map(([r, 名前]) => h('option', { value: r, selected: (値.target?.r || 50) === r }, 名前)));
+    const 盤 = h('div', { class: 'ボード枠 クイズ盤' });
+    const 次の位置 = h('button', { type: 'button', class: 'ボタン 控えめ 小' }, '次のコマの位置を正解にする');
+    const 選択欄 = h('div', {}, 項目('選択肢（1行に1つ、2〜5個）', 選択肢), 項目('正解は何番目？', 正解));
+    const タップ欄 = h('div', {}, 項目('正解の位置（図をタップ）', 盤, '黄色の輪＝問題の選手。移動先は次のコマの位置、位置は隠した選手の位置が目安'), h('div', { class: 'ボタン列 折返し' }, 次の位置), 項目('正解の範囲', 半径));
+    const 読む = () => {
+      値.quiz_type = 種類.value;
+      値.frame = コマ.value === '' ? null : Number(コマ.value);
+      値.position = [...位置列.querySelectorAll('input:checked')].map((i) => i.value);
+      if (値.target) 値.target.r = Number(半径.value);
+    };
+    const 対象の次の位置 = () => {
+      const 対象 = 値.position[0];
+      const コマ番号 = 値.quiz_type === '移動先' ? 値.frame + 1 : 値.frame;
+      return 値.frame === null ? null : 戦術.data.frames[コマ番号]?.players.find((p) => p.id === 対象) || null;
+    };
+    const 更新 = () => {
+      読む();
+      const タップ = 値.quiz_type === '移動先' || 値.quiz_type === '位置';
+      選択欄.hidden = タップ;
+      タップ欄.hidden = !タップ;
+      次の位置.textContent = 値.quiz_type === '移動先' ? '次のコマの位置を正解にする' : '隠した選手の位置を正解にする';
+      次の位置.disabled = !対象の次の位置();
+      const 見本 = 問題用のコマ(戦術, { ...値, position: 値.position.join(',') });
+      置き換え(盤, 見本 ? ボードSVG(見本, {
+        強調: 値.quiz_type === '移動先' ? 値.position[0] : null,
+        重ね: 値.target ? 正解の印(戦術, { ...値, position: 値.position.join(',') }, 値.target) : [],
+        タップ: ([x, y]) => { 値.target = { x, y, r: Number(半径.value) }; 更新(); },
+      }) : h('p', { class: '補足' }, 'コマと対象の選手を選ぶと図が出ます'));
+    };
+    次の位置.onclick = () => { const p = 対象の次の位置(); if (p) { 値.target = { x: p.x, y: p.y, r: Number(半径.value) }; 更新(); } };
+    [種類, コマ, 半径].forEach((e) => e.addEventListener('change', 更新));
+    位置列.addEventListener('change', 更新);
+    更新();
+    const 送信 = h('button', { class: 'ボタン 大', type: 'button' }, '保存');
+    送信.onclick = async () => {
+      読む();
+      const タップ = 値.quiz_type === '移動先' || 値.quiz_type === '位置';
+      if (タップ && 値.position.length !== 1) return 通知('タップ問題は、問題の選手を1人だけ選んでください', 'エラー');
+      const 本文 = {
+        quiz_type: 値.quiz_type, position: 値.position, frame: 値.frame, question: 問題文.value.trim(), explanation: 解説.value.trim(),
+        ...(タップ ? { target: 値.target } : { choices: 選択肢.value.split('\n').map((x) => x.trim()).filter(Boolean), answer_index: Number(正解.value) - 1 }),
+      };
+      送信.disabled = true;
+      try {
+        if (q) await api('PUT', `/api/quizzes/${q.id}`, 本文);
+        else await api('POST', `/api/tactics/${戦術.id}/quizzes`, 本文);
+        閉じる(true);
+      } catch (エラー) { エラー通知(エラー); } finally { 送信.disabled = false; }
+    };
+    return h('div', { class: 'フォーム' },
+      項目('問題の種類', 種類),
+      項目('問題の選手（ポジション別）', 位置列, '選ぶと「その選手向け」の問題になります。何も選ばなければ全員向け'),
+      項目(`一緒に見せるコマ（全${コマ数}コマ）`, コマ, '次の動き・タップ問題では必須。対象の選手の線（答え）は隠して見せます'),
+      項目('問題', 問題文),
+      選択欄, タップ欄,
+      項目('解説（回答後に表示）', 解説),
+      送信);
+  });
   if (保存) { 通知('保存しました'); 戦術詳細画面(戦術.id); }
+}
+
+async function 移動先問題を自動作成(戦術) {
+  if (!(await 確認('図のコマの間で大きく動いた選手ごとに「動く先をタップする問題」を作ります。同じコマ・同じ選手の問題があれば作りません。', '作成'))) return;
+  try {
+    const r = await api('POST', `/api/tactics/${戦術.id}/quizzes/auto`, {});
+    通知(r.added ? `${r.added}問を作りました` : '新しく作れる問題はありませんでした（コマが1つだけ、または作成済み）', r.added ? '成功' : '注意');
+    戦術詳細画面(戦術.id);
+  } catch (エラー) { エラー通知(エラー); }
+}
+
+// ---------- 実技チェック（コートで5人がそろって動けたか） ----------
+
+function 実技チェックの欄(戦術) {
+  const コーチ = コーチか();
+  return h('div', { class: 'リスト' }, 戦術.practices.map((記録) => h('div', { class: 'リスト項目 縦' },
+    h('div', { class: '行 間' }, h('strong', {}, 日付表示(記録.checked_on, true)), バッジ(できばえ[記録.rating], できばえの色[記録.rating])),
+    h('div', { class: 'コマ結果' }, 記録.frames_ok.slice(0, 戦術.data.frames.length).map((良, i) => h('span', { class: 良 ? '良 文字' : '悪 文字' }, `コマ${i + 1} ${良 ? '◯' : '×'}`))),
+    h('div', { class: 'バッジ列' }, 記録.players.map((p) => バッジ(`${p.position ? `${選手名(p.position)} ` : ''}${p.name} ${p.ok ? '◯' : '×'}`, p.ok ? '良' : '悪'))),
+    記録.note ? h('p', {}, 記録.note) : null,
+    コーチ ? h('div', { class: 'ボタン列' }, h('button', {
+      class: 'ボタン 控えめ 小',
+      onclick: async () => {
+        if (!(await 確認('この実技チェックの記録を削除しますか？', '削除', true))) return;
+        try { await api('DELETE', `/api/practice/${記録.id}`); 戦術詳細画面(戦術.id); } catch (エラー) { エラー通知(エラー); }
+      },
+    }, '削除')) : null)));
+}
+
+async function 実技チェックを記録(戦術) {
+  const チーム = 戦術.kind === 'オフェンス' ? 'O' : 'X';
+  const 位置 = 戦術.data.frames[0].players.filter((p) => p.team === チーム).map((p) => p.id)
+    .sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)));
+  const 選手 = 戦術.checks;
+  const 保存 = await シート('実技チェックを記録', (閉じる) => {
+    const 日 = h('input', { type: 'date', value: 今日の日付() });
+    const 行 = 位置.map((id, i) => ({
+      id,
+      選手: h('select', {}, h('option', { value: '' }, '—'), 選手.map((p, k) => h('option', { value: p.id, selected: k === i }, `${p.number ? `#${p.number} ` : ''}${p.name}`))),
+      良: h('input', { type: 'checkbox', checked: true }),
+    }));
+    const コマ = 戦術.data.frames.map(() => h('input', { type: 'checkbox', checked: true }));
+    let 評価 = 2;
+    const 評価ボタン = できばえ.map((名前, i) => h('button', { type: 'button', class: 'ボタン 控えめ', onclick: () => { 評価 = i; 色(); } }, 名前));
+    const 色 = () => 評価ボタン.forEach((b, i) => { b.className = `ボタン ${i === 評価 ? できばえの色[i] : '控えめ'}`; });
+    色();
+    const メモ = h('textarea', { rows: 2, maxLength: 5000, placeholder: '例：3番のトップの埋めが遅い。声が出ていた' });
+    const 送信 = h('button', { class: 'ボタン 大', type: 'button' }, '保存');
+    送信.onclick = async () => {
+      const 参加 = 行.filter((r) => r.選手.value).map((r) => ({ player_id: Number(r.選手.value), position: r.id, ok: r.良.checked }));
+      if (!参加.length) return 通知('参加した選手を選んでください', 'エラー');
+      送信.disabled = true;
+      try {
+        await api('POST', `/api/tactics/${戦術.id}/practice`, {
+          checked_on: 日.value, rating: 評価, frames_ok: コマ.map((c) => c.checked), note: メモ.value.trim(), players: 参加,
+        });
+        閉じる(true);
+      } catch (エラー) { エラー通知(エラー); } finally { 送信.disabled = false; }
+    };
+    return h('div', { class: 'フォーム' },
+      h('div', { class: '項目' }, h('label', {}, '実施日'), 日),
+      h('h3', { class: 'フォーム小見出し' }, 'ポジションと選手（できた人にチェック）'),
+      h('div', { class: '表の枠' }, h('table', { class: '表 実技表' },
+        h('tbody', {}, 行.map((r) => h('tr', {}, h('th', {}, 選手名(r.id)), h('td', {}, r.選手), h('td', {}, h('label', { class: 'チェック' }, r.良, ' できた'))))))),
+      h('h3', { class: 'フォーム小見出し' }, 'コマごとに、5人がそろって動けたか'),
+      h('div', { class: 'リスト' }, 戦術.data.frames.map((f, i) => h('label', { class: '項目 チェック' }, コマ[i], h('span', {}, `コマ${i + 1}：${f.note || ''}`)))),
+      h('h3', { class: 'フォーム小見出し' }, '全体のできばえ'),
+      h('div', { class: '出欠ボタン' }, 評価ボタン),
+      h('div', { class: '項目' }, h('label', {}, 'メモ（選手にも見えます）'), メモ),
+      送信);
+  });
+  if (保存) { 通知('記録しました'); 戦術詳細画面(戦術.id); }
+}
+
+// クイズ8割以上正解（全問回答）＋実技で本人も全体もできた
+function 習得したか(戦術, c) {
+  const 数 = 戦術.quizzes.length;
+  const クイズ = !数 || (c.answered >= 数 && c.correct >= 数 * 0.8);
+  return クイズ && c.practice_ok === true && c.practice_rating === 2;
 }
 
 export async function 戦術詳細画面(id) {
@@ -407,7 +738,17 @@ export async function 戦術詳細画面(id) {
 
     戦術.quizzes.length || コーチ ? h('section', { class: 'カード' },
       h('div', { class: '行 間' }, h('h2', {}, '📝 理解度クイズ'), コーチ ? h('button', { class: 'ボタン 小', onclick: () => クイズ編集(戦術) }, '＋ 追加') : null),
-      戦術.quizzes.length ? クイズ欄(戦術) : 空表示('クイズはまだありません')) : null,
+      h('p', { class: '補足' }, '基本・次の動き（コマを止めて選ぶ）・タップ（図で位置を答える）の3種類。ポジション別の問題もあります'),
+      戦術.quizzes.length ? クイズ欄(戦術) : 空表示('クイズはまだありません'),
+      コーチ && 戦術.data.frames.length > 1 ? h('div', { class: 'ボタン列' },
+        h('button', { class: 'ボタン 控えめ 小', onclick: () => 移動先問題を自動作成(戦術) }, '🪄 図から移動先タップ問題を自動作成')) : null) : null,
+
+    コーチ || 戦術.practices.length ? h('section', { class: 'カード' },
+      h('div', { class: '行 間' }, h('h2', {}, '🏃 実技チェック'), コーチ ? h('button', { class: 'ボタン 小', onclick: () => 実技チェックを記録(戦術) }, '＋ 記録') : null),
+      h('p', { class: '補足' }, コーチ
+        ? 'コートで実際に動いて、5人がそろって図のとおりに動けたかを記録します（コマごと・選手ごと）'
+        : 'コーチが記録した、あなたが参加した実技チェックの結果'),
+      戦術.practices.length ? 実技チェックの欄(戦術) : 空表示('まだ記録はありません')) : null,
 
     h('section', { class: 'カード' },
       h('h2', {}, '✅ 理解度チェック'),
@@ -426,12 +767,14 @@ export async function 戦術詳細画面(id) {
 
     コーチ ? h('section', { class: 'カード' },
       h('h2', {}, '👥 選手の理解度'),
-      h('div', { class: '表の枠' }, h('table', { class: '表' },
+      h('div', { class: '表の枠' }, h('table', { class: '表 理解度表' },
         h('thead', {}, h('tr', {}, h('th', {}, '選手'), h('th', {}, '理解度'), h('th', {}, 'クイズ'))),
         h('tbody', {}, 戦術.checks.map((c) => h('tr', {},
-          h('td', {}, c.number ? `#${c.number} ` : '', c.name),
+          h('td', {}, 習得したか(戦術, c) ? '🏅 ' : '', c.number ? `#${c.number} ` : '', c.name),
           h('td', {}, c.understood === null ? バッジ('未確認', '薄') : バッジ(理解度[c.understood], 理解度の色[c.understood])),
-          h('td', {}, 戦術.quizzes.length ? `${c.correct}/${戦術.quizzes.length}` : '—'))))))) : null,
+          h('td', {}, 戦術.quizzes.length ? `${c.correct}/${戦術.quizzes.length}` : '—',
+            c.practice_rating === null ? null : h('div', {}, バッジ(`実技${c.practice_ok ? '◯' : '×'}`, c.practice_ok && c.practice_rating === 2 ? '良' : c.practice_ok ? '注意' : '悪')))))))),
+      h('small', { class: 'ブロック' }, '🏅＝習得（クイズを全問答えて8割以上正解＋実技チェックで本人も全体もできた）。実技は一番新しい記録')) : null,
 
     コーチ ? h('div', { class: 'ボタン列' },
       h('button', {
@@ -495,14 +838,7 @@ export async function 戦術編集画面(id) {
   const 注記欄 = h('input', { type: 'text', maxLength: 300, placeholder: 'このコマの説明（例：5番がスクリーン）' });
   const 道具列 = h('div', { class: '道具列', role: 'toolbar' });
 
-  const 座標 = (e) => {
-    const svg = 盤.querySelector('svg');
-    const 点 = svg.createSVGPoint();
-    点.x = e.clientX;
-    点.y = e.clientY;
-    const p = 点.matrixTransform(svg.getScreenCTM().inverse());
-    return [Math.round(Math.max(0, Math.min(コート.幅, p.x))), Math.round(Math.max(0, Math.min(コート.奥行, p.y)))];
-  };
+  const 座標 = (e) => SVG座標(盤.querySelector('svg'), e);
   const コマ = () => 図.frames[現在];
 
   const 編集操作 = {

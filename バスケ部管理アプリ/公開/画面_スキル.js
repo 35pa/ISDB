@@ -261,8 +261,8 @@ export async function 標準データを追加(完了後) {
   if (!(await 確認('アプリに入っている標準のスキル・ドリル（基礎〜プロ）・作戦テンプレートのうち、まだチームにないものを追加します。今あるデータは消えません（ドリルはレベル順に並び直します）。', '追加する'))) return;
   try {
     const r = await api('POST', '/api/team/standard-data', {});
-    通知(r.drills || r.tactics || r.categories
-      ? `追加しました（スキル${r.categories}・ドリル${r.drills}・作戦テンプレート${r.tactics}）`
+    通知(r.drills || r.tactics || r.categories || r.quizzes
+      ? `追加しました（スキル${r.categories}・ドリル${r.drills}・作戦テンプレート${r.tactics}・理解度クイズ${r.quizzes}）`
       : 'すべて追加済みです');
     完了後?.();
   } catch (エラー) { エラー通知(エラー); }

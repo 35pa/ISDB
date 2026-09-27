@@ -330,6 +330,9 @@ section > textarea, section > input, .カード > textarea, .カード > input, 
 .表 th, .表 td { padding: 8px 8px; border-bottom: 1px solid var(--罫線); text-align: center; }
 .表 th { font-size: .78rem; color: var(--薄文字); background: var(--面2); position: sticky; top: 0; }
 .表 td:first-child, .表 th:first-child { text-align: left; }
+.理解度表 { white-space: normal; }
+.理解度表 th, .理解度表 td { padding: 8px 4px; }
+.理解度表 td:first-child { word-break: keep-all; }
 .表 tr.押せる, .表 th.押せる { cursor: pointer; }
 .表 .並び中 { color: var(--主濃); font-weight: 800; }
 .固定列 { position: sticky; left: 0; background: var(--面); z-index: 1; }
@@ -368,6 +371,19 @@ th.固定列 { background: var(--面2); z-index: 2; }
 .選択肢 { min-height: 44px; border-radius: 10px; border: 1px solid var(--罫線); background: var(--面); text-align: left; padding: 8px 12px; cursor: pointer; }
 .選択肢.選んだ { border: 2px solid var(--悪); }
 .選択肢.正解 { border: 2px solid var(--良); background: color-mix(in srgb, var(--良) 10%, var(--面)); }
+.クイズ集計 { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 6px 0 2px; font-size: 13px; color: var(--薄文字); }
+.クイズ集計 strong { color: var(--文字); }
+.クイズ図 { margin: 6px 0; }
+.クイズ図 figcaption { font-size: 12px; color: var(--薄文字); }
+.ボード枠.クイズ盤 { max-width: 420px; }
+.作戦ボード.タップできる { cursor: crosshair; touch-action: manipulation; }
+.位置列 { display: flex; flex-wrap: wrap; gap: 6px; }
+.位置札 { display: inline-flex; align-items: center; gap: 4px; min-height: 36px; padding: 0 10px; border: 1px solid var(--罫線); border-radius: 999px; font-weight: 600; }
+.位置札 input { width: 18px; height: 18px; accent-color: var(--主); }
+.コマ結果 { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 13px; font-weight: 600; }
+.実技表 select { width: 100%; min-width: 0; }
+.実技表 th { white-space: nowrap; }
+.実技表 label.チェック { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 
 /* ---------- 図表 ---------- */
 .シュートチャート { width: 100%; height: auto; display: block; border-radius: 12px; }
@@ -432,6 +448,7 @@ button.目標カード { cursor: pointer; }
   border-top: 1px solid var(--罫線);
 }
 #下部メニュー[hidden] { display: none; }
+[hidden] { display: none !important; }
 #下部メニュー a {
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
   text-decoration: none; color: var(--薄文字); font-size: .7rem; font-weight: 700;
